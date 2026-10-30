@@ -98,6 +98,7 @@ export default function App() {
   const [downloadProgress, setDownloadProgress] = useState<UpdateProgressEvent | null>(null);
   const [history, setHistory] = useState<StoredMessage[]>([]);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [memoryInitialized, setMemoryInitialized] = useState(false);
 
   // Handle file attachment: validate, read, and prepare for chat
   const handleAttachFiles = useCallback(async (fileList: FileList) => {
@@ -263,20 +264,29 @@ export default function App() {
       })));
 
       const latest = list[0];
-      if (!latest) return;
-      const conversation = await invokeLoadConversation(latest.id);
-      if (!alive || !conversation) return;
+      if (latest) {
+        const conversation = await invokeLoadConversation(latest.id);
+        if (!alive) return;
+        if (conversation) {
+          // Restoration is not new activity; keep the saved timestamp unchanged.
+          skipNextPersistenceRef.current = true;
+          setActiveConversationId(conversation.id);
+          setMessages(conversation.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            text: message.text,
+            time: message.time,
+            streaming: false,
+          })));
+        }
+      }
 
-      // Restoration is not new activity; keep the saved timestamp unchanged.
-      skipNextPersistenceRef.current = true;
-      setActiveConversationId(conversation.id);
-      setMessages(conversation.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        text: message.text,
-        time: message.time,
-        streaming: false,
-      })));
+      if (alive) {
+        setMemoryInitialized(memoryReady);
+        if (!memoryReady) {
+          setChatError("Penyimpanan lokal tidak dapat disiapkan. Percakapan baru belum bisa disimpan.");
+        }
+      }
     };
 
     void initialize().catch(() => {
@@ -493,7 +503,7 @@ export default function App() {
 
   // Debounced autosave. messagesRef is updated by the effect above before this effect runs.
   useEffect(() => {
-    if (!memoryReadyRef.current || messages.length === 0) return;
+    if (!memoryInitialized || !memoryReadyRef.current || messages.length === 0) return;
 
     if (skipNextPersistenceRef.current) {
       skipNextPersistenceRef.current = false;
@@ -514,13 +524,13 @@ export default function App() {
         persistenceTimerRef.current = null;
       }
     };
-  }, [messages, persistConversation]);
+  }, [messages, memoryInitialized, persistConversation]);
 
   /// Save settings whenever they change (debounced via useEffect).
   useEffect(() => {
-    if (!memoryReadyRef.current) return;
+    if (!memoryInitialized || !memoryReadyRef.current) return;
     invokeSaveSettings(settings).catch(() => { /* ignore */ });
-  }, [settings.ai, settings.appearance]);
+  }, [settings.ai, settings.appearance, memoryInitialized]);
 
   const animAllowed =
     settings.appearance.bgAnimation && !settings.appearance.reducedMotion && !systemReduced;
@@ -548,6 +558,10 @@ export default function App() {
     async (text: string, attached: Attachment[]): Promise<boolean> => {
       const t = text.trim();
       if (t === "" && attached.length === 0) return false;
+      if (!memoryInitialized || !memoryReadyRef.current) {
+        setChatError("Penyimpanan lokal masih disiapkan atau tidak tersedia. Tunggu sampai inisialisasi selesai, lalu coba lagi.");
+        return false;
+      }
       if (genState !== "idle") return false;
       if (chatStartPendingRef.current) {
         setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
@@ -800,6 +814,7 @@ export default function App() {
 
   // ── Load conversation from history ──
   const openConversation = useCallback(async (id: string) => {
+    if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
     if (persistenceTimerRef.current !== null) {
       window.clearTimeout(persistenceTimerRef.current);
       persistenceTimerRef.current = null;
@@ -824,7 +839,7 @@ export default function App() {
     setAttachments([]);
     setChatError(null);
     setView("chat");
-  }, [persistConversation, setActiveConversationId]);
+  }, [persistConversation, setActiveConversationId, stopGeneration]);
 
   // ── Delete a conversation and refresh the persistent history list ──
   const deleteConversation = useCallback(async (id: string) => {
@@ -833,6 +848,7 @@ export default function App() {
       persistenceTimerRef.current = null;
     }
     if (activeConversationRef.current === id) {
+      if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
       await persistConversation();
     }
 
@@ -848,7 +864,7 @@ export default function App() {
       setAttachments([]);
     }
     await refreshHistory();
-  }, [persistConversation, refreshHistory, setActiveConversationId]);
+  }, [persistConversation, refreshHistory, setActiveConversationId, stopGeneration]);
 
   const model = models.find((m) => m.id === settings.ai.model) ?? models[0];
 
