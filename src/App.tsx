@@ -206,8 +206,8 @@ export default function App() {
   const refreshRuntimeStatus = useCallback(async () => {
     const modelId = selectedModelRef.current;
     const status = await invokeRuntimeStatus(modelId);
-    if (status && selectedModelRef.current === modelId) {
-      setRuntimeStatus(status as RuntimeStatus);
+    if (selectedModelRef.current === modelId) {
+      setRuntimeStatus((status as RuntimeStatus | null) ?? "runtime_unavailable");
       if (status === "ready") lastActivityRef.current = Date.now();
     }
     return status;
@@ -333,7 +333,11 @@ export default function App() {
     let alive = true;
     setRuntimeStatus("loading");
     invokeRuntimeStatus(settings.ai.model).then((status) => {
-      if (!alive || !status) return;
+      if (!alive) return;
+      if (!status) {
+        setRuntimeStatus("runtime_unavailable");
+        return;
+      }
       setRuntimeStatus(status as RuntimeStatus);
       // A model discovered as loaded starts a fresh idle interval from now.
       if (status === "ready") lastActivityRef.current = Date.now();
