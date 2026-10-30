@@ -36,6 +36,7 @@ pub fn run() {
             fs::save_settings,
             fs::load_settings,
             fs::open_memory_folder,
+            fs::pick_memory_parent_folder,
             fs::set_custom_path,
             fs::backup_memory,
             // Phase 5: File reader & vision
