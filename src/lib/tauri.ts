@@ -318,8 +318,8 @@ export async function invokeSaveAttachmentBytes(
     const { invoke } = await import("@tauri-apps/api/core");
     return await invoke<SavedAttachment>("save_attachment_bytes", {
       name,
-      mime_type: mimeType,
-      base64_data: base64Data,
+      mimeType,
+      base64Data,
     });
   } catch {
     return null;
