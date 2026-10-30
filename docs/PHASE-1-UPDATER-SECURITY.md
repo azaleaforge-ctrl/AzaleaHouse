@@ -46,6 +46,10 @@ The official updater documentation explains the two-key model and signed release
 
 The current official `tauri-plugin-updater` 2.14.1 documentation requires Rust 1.90 or newer; this repository currently declares `rust-version = "1.77"`. The runtime/toolchain and manifest declaration must be aligned and verified during the official plugin integration: https://docs.rs/crate/tauri-plugin-updater/latest
 
+## CI validation
+
+The repository now has a Windows GitHub Actions workflow (`.github/workflows/ci.yml`) that runs `npm ci`, `npm run build`, `cargo check --all-targets`, and `cargo test` on pull requests. This PR should be kept open until the current head's frontend and Rust jobs complete successfully. Any formatter-only failure from the earlier draft workflow is not treated as a code-build failure; CI is now aligned to the canonical workflow on `main`.
+
 ## Validation outcome
 
 - Static review of the changed source and UI: performed.
