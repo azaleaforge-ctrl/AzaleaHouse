@@ -1227,8 +1227,20 @@ export default function App() {
   // ── Update operations (Phase 7) ──
   const checkForUpdate = useCallback(async () => {
     setUpdateStatus("checking");
-    const info = await invokeCheckUpdate();
-    if (info) {
+    try {
+      const info = await invokeCheckUpdate();
+      if (!info) {
+        setUpdateInfo({
+          available: false,
+          current_version: appVersion,
+          latest_version: appVersion,
+          body: "",
+          assets: [],
+          error: "Pemeriksaan pembaruan hanya tersedia di aplikasi desktop.",
+        });
+        setUpdateStatus("offline");
+        return;
+      }
       setUpdateInfo(info);
       if (info.error) {
         setUpdateStatus("offline");
@@ -1237,27 +1249,48 @@ export default function App() {
       } else {
         setUpdateStatus("up_to_date");
       }
-    } else {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUpdateInfo((previous) => ({
+        available: false,
+        current_version: previous?.current_version ?? appVersion,
+        latest_version: previous?.latest_version ?? appVersion,
+        body: previous?.body ?? "",
+        assets: [],
+        error: message || "Pemeriksaan pembaruan gagal.",
+      }));
       setUpdateStatus("offline");
     }
-  }, []);
+  }, [appVersion]);
 
   const downloadUpdate = useCallback(async () => {
     if (!updateInfo || updateInfo.assets.length === 0) return;
     const asset = updateInfo.assets[0];
     if (!asset) return;
+    setDownloadProgress(null);
+    setUpdateInfo((previous) => previous ? { ...previous, error: null } : previous);
     setUpdateStatus("downloading");
-    const path = await invokeDownloadUpdate(asset.url, asset.name);
-    if (path) {
+    try {
+      await invokeDownloadUpdate(asset.url, asset.name);
       setUpdateStatus("downloaded");
-    } else {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDownloadProgress(null);
+      if (/dibatalkan/i.test(message)) {
+        setUpdateStatus("idle");
+        return;
+      }
+      setUpdateInfo((previous) => previous ? { ...previous, error: message || "Unduhan pembaruan gagal." } : previous);
       setUpdateStatus("error");
     }
   }, [updateInfo]);
 
   const cancelDownload = useCallback(async () => {
-    await invokeCancelDownload();
-    setUpdateStatus("idle");
+    const accepted = await invokeCancelDownload();
+    if (!accepted) {
+      setUpdateInfo((previous) => previous ? { ...previous, error: "Permintaan pembatalan unduhan gagal." } : previous);
+      setUpdateStatus("error");
+    }
   }, []);
 
   // Listen for download progress events

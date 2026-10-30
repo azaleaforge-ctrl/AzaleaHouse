@@ -38,7 +38,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 | 4 — Local storage & .AzaleaMemory | **Partial; hardening in progress** | Conversation/settings persistence exists. Custom-path migration and backup are under Repair Stage 1; restore, memory deletion controls, and full migration failure acceptance remain incomplete. |
 | 5 — File reader & vision | **Implemented in source; manual acceptance pending** | Stage 2 adds bounded text/code, PDF, DOCX and XLSX extraction; PNG/JPG/JPEG/WebP images; safe byte-only attachment persistence and session metadata. OCR and some PDF fonts/encodings remain limitations; validate with Windows/Ollama samples. |
 | 6 — Document engine | **Partial — first DOCX/export slice** | Documents view now previews a Markdown-backed draft and writes a genuine OOXML DOCX locally with styles, lists, tables, A4 margins, and page numbering. PDF uses Windows print-to-PDF through the native print dialog; direct PDF generation and render validation remain outstanding. |
-| 7 — Version Center & manual updater | **Partial / blocked** | GitHub metadata check and manual download code exist, but the official signed Tauri updater, signature verification, and Install & Restart are not configured. No GitHub Release is currently published. |
+| 7 — Version Center & manual updater | **Partial — download reliability hardened; signed installation blocked** | Release versions are compared semantically, installer assets must match the release tag/version and size limits, downloads validate a Windows PE header, and cancellation is responsive/single-flight. The official signed Tauri updater, cryptographic signature verification, and Install & Restart remain blocked pending the owner's signing-key setup. |
 | 8 — Quality & packaging | **CI infrastructure present; release acceptance pending** | Windows CI checks frontend build and Rust compile/tests. Installer installation/uninstallation, interactive desktop behavior, and end-to-end update tests still need direct acceptance. |
 
 ## Phase 2 technical notes
@@ -51,8 +51,8 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Development version and release freeze
 
-- The development branch synchronizes application/package metadata to **0.1.3** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
-- This version change is source/configuration metadata only. It does **not** create a `v0.1.3` tag, GitHub Release, installer upload, or production update.
+- The development branch synchronizes application/package metadata to **0.1.4** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- This version change is source/configuration metadata only. It does **not** create a `v0.1.4` tag, GitHub Release, installer upload, or production update.
 - Keep the release freeze in place until the planned repairs and Windows acceptance tests pass and the owner separately authorizes publication.
 
 ## Security and behavior boundaries
@@ -82,3 +82,14 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - PDF export currently delegates to the Windows print dialog. The user selects Microsoft Print to PDF to create a PDF; AzaleaHouse does not claim that this is a separate, direct PDF renderer.
 - The document editor is a deterministic renderer/formatter, not yet the complete AI-to-document pipeline. The first slice accepts content written or prepared elsewhere and pasted as Markdown; generating content directly from an AI prompt, DOCX render validation, and direct PDF rendering remain future work.
 - Version metadata is synchronized to 0.1.3 on this branch only. No tag, GitHub Release, installer, or production update is created.
+
+
+## Repair increment — Version Center / Manual Updater (PRD Phase 7)
+
+- The latest GitHub Release tag is parsed as a semantic version and compared numerically with the installed version. A lower or equal latest version is not advertised as an update, and malformed tags fail closed with a visible error.
+- Release assets must have the approved AzaleaHouse_<version>_*.exe naming form, match the exact release tag in the download URL, have a nonzero metadata size no larger than 2 GiB, and come from the fixed project release path.
+- Downloads are single-flight. Each attempt owns a cancellation channel, so cancelling during the HTTP request or waiting for streamed data does not depend on another network chunk arriving, and a subsequent download cannot reset an earlier attempt's cancellation flag.
+- The completed temporary file must match Content-Length when provided, be nonempty, and pass a lightweight Windows PE-header check before being renamed to its final cache name. This catches common HTML/error payloads; it is not cryptographic authenticity verification.
+- Frontend update operations retain backend error text rather than silently converting all failures to generic null results. Download progress is reset for each attempt and the Version Center no longer shows a static Live label.
+- The app still never runs the downloaded installer. Official Tauri updater integration and cryptographic signature verification remain blocked until the owner generates and securely stores the private signing key, configures the public verification key, and publishes signed release artifacts.
+- Version metadata is synchronized to 0.1.4 on this branch only. No tag, GitHub Release, installer upload, or production update is created.

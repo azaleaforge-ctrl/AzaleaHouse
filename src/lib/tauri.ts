@@ -506,29 +506,21 @@ export interface UpdateProgressEvent {
 /** Periksa update dari GitHub. */
 export async function invokeCheckUpdate(): Promise<UpdateInfo | null> {
   if (!isTauri()) return null;
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<UpdateInfo>("check_update");
-  } catch {
-    return null;
-  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<UpdateInfo>("check_update");
 }
 
 /** Unduh update (manual trigger). Emit `azalea:update_progress`. */
 export async function invokeDownloadUpdate(
   assetUrl: string,
   assetName: string,
-): Promise<string | null> {
-  if (!isTauri()) return null;
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<string>("download_update", {
-      asset_url: assetUrl,
-      asset_name: assetName,
-    });
-  } catch {
-    return null;
-  }
+): Promise<string> {
+  if (!isTauri()) throw new Error("Unduhan pembaruan hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<string>("download_update", {
+    asset_url: assetUrl,
+    asset_name: assetName,
+  });
 }
 
 /** Batalkan unduhan. */
