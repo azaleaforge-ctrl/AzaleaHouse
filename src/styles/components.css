@@ -1075,6 +1075,17 @@
   font-size: 12px;
   color: var(--color-text-faint);
 }
+.settings-memory-notice {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  background: var(--glass-bg);
+}
 .icon-btn--sm {
   width: 28px;
   height: 28px;
