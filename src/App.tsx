@@ -99,6 +99,7 @@ export default function App() {
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [memoryPath, setMemoryPath] = useState<string | null>(null);
   const [memoryNotice, setMemoryNotice] = useState<string | null>(null);
+  const [memoryBusy, setMemoryBusy] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
@@ -178,6 +179,7 @@ export default function App() {
   const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
   const previousRuntimeGenStateRef = useRef<GenState>("idle");
   const memoryReadyRef = useRef(false);
+  const memoryOperationRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceTimerRef = useRef<number | null>(null);
@@ -686,6 +688,10 @@ export default function App() {
   const sendMessage = useCallback(
     async (text: string, attached: Attachment[]): Promise<boolean> => {
       const t = text.trim();
+      if (memoryOperationRef.current) {
+        setChatError("Penyimpanan lokal sedang dipindahkan atau dicadangkan. Tunggu sampai selesai.");
+        return false;
+      }
       if (t === "" && attached.length === 0) return false;
       if (!memoryInitialized || !memoryReadyRef.current) {
         setChatError("Penyimpanan lokal masih disiapkan atau tidak tersedia. Tunggu sampai inisialisasi selesai, lalu coba lagi.");
@@ -850,6 +856,10 @@ export default function App() {
 
   // ── Regenerate ──
   const regenerate = useCallback(() => {
+    if (memoryOperationRef.current) {
+      setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuat ulang respons.");
+      return;
+    }
     const current = messagesRef.current;
     const last = current[current.length - 1];
     if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
@@ -938,6 +948,10 @@ export default function App() {
 
   // ── New chat ──
   const newChat = useCallback(() => {
+    if (memoryOperationRef.current) {
+      setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuat percakapan baru.");
+      return;
+    }
     setChatError(null);
     cancelBeforeStartRef.current = chatStartPendingRef.current;
     if (streamIdRef.current) {
@@ -961,6 +975,10 @@ export default function App() {
 
   // ── Load conversation from history ──
   const openConversation = useCallback(async (id: string) => {
+    if (memoryOperationRef.current) {
+      setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuka percakapan lain.");
+      return;
+    }
     // Prevent a cancellation/finalization effect from writing to the session being left.
     suppressAutoSaveRef.current = true;
     try {
@@ -999,6 +1017,10 @@ export default function App() {
 
   // ── Delete a conversation and refresh the persistent history list ──
   const deleteConversation = useCallback(async (id: string) => {
+    if (memoryOperationRef.current) {
+      setMemoryNotice("Selesaikan operasi penyimpanan sebelum menghapus percakapan.");
+      return;
+    }
     if (persistenceTimerRef.current !== null) {
       window.clearTimeout(persistenceTimerRef.current);
       persistenceTimerRef.current = null;
@@ -1087,10 +1109,16 @@ export default function App() {
   }, []);
 
   const changeMemoryPath = useCallback(async () => {
+    if (memoryOperationRef.current) return;
+    memoryOperationRef.current = true;
     try {
       const selectedParent = await invokePickMemoryParentFolder();
       if (!selectedParent) return;
-      setMemoryNotice("Memvalidasi lokasi dan menyalin data memori...");
+      setMemoryBusy(true);
+      if (genState !== "idle") throw new Error("Selesaikan generasi chat yang sedang berjalan sebelum memindahkan memori.");
+      const saved = await persistConversation();
+      if (!saved) throw new Error("Percakapan aktif belum berhasil disimpan. Pemindahan dibatalkan.");
+      setMemoryNotice("Memvalidasi lokasi, membuat cadangan, dan menyalin data memori...");
       await invokeSetCustomPath(selectedParent);
       const activePath = await invokeMemoryPath();
       if (!activePath) throw new Error("Lokasi memori aktif tidak dapat dibaca setelah migrasi.");
@@ -1098,18 +1126,30 @@ export default function App() {
       setMemoryNotice(`Lokasi memori berhasil dipindahkan ke ${activePath}. Data sumber lama tidak dihapus.`);
     } catch (error) {
       setMemoryNotice(`Gagal memindahkan lokasi memori: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      memoryOperationRef.current = false;
+      setMemoryBusy(false);
     }
-  }, []);
+  }, [genState, persistConversation]);
 
   const backupMemory = useCallback(async () => {
+    if (memoryOperationRef.current) return;
+    memoryOperationRef.current = true;
+    setMemoryBusy(true);
     try {
+      if (genState !== "idle") throw new Error("Selesaikan generasi chat yang sedang berjalan sebelum membuat cadangan.");
+      const saved = await persistConversation();
+      if (!saved) throw new Error("Percakapan aktif belum berhasil disimpan. Cadangan dibatalkan.");
       const backupPath = await invokeBackupMemory();
       if (!backupPath) throw new Error("Lokasi cadangan tidak dikembalikan oleh backend.");
       setMemoryNotice(`Cadangan memori dibuat di: ${backupPath}`);
     } catch (error) {
       setMemoryNotice(`Gagal membuat cadangan memori: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      memoryOperationRef.current = false;
+      setMemoryBusy(false);
     }
-  }, []);
+  }, [genState, persistConversation]);
 
   // ── Update operations (Phase 7) ──
   const checkForUpdate = useCallback(async () => {
@@ -1218,6 +1258,7 @@ export default function App() {
               modelBusy={genState === "generating" || runtimeStatus === "unloading"}
               memoryPath={memoryPath}
               memoryNotice={memoryNotice}
+              memoryBusy={memoryBusy}
               onOpenMemoryFolder={openMemoryFolder}
               onChangeMemoryPath={changeMemoryPath}
               onBackupMemory={backupMemory}
@@ -1265,6 +1306,16 @@ export default function App() {
           onChange={patchAi}
           onOpenAdvanced={() => setView("settings")}
         />
+      ) : null}
+
+      {memoryBusy ? (
+        <div className="memory-operation-overlay" role="status" aria-live="polite">
+          <div className="memory-operation-card">
+            <span className="memory-operation-spinner" aria-hidden="true" />
+            <strong>Operasi penyimpanan lokal</strong>
+            <p>Menyalin atau mencadangkan .AzaleaMemory. Jangan tutup aplikasi sampai proses selesai.</p>
+          </div>
+        </div>
       ) : null}
 
       <VersionCenter
