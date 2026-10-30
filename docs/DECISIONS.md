@@ -36,7 +36,7 @@ Unconfirmed items stay marked **provisional** until the user approves them.
 | 5 — File Reader & Vision | **complete** | Rust `fs.rs` file ops (6 commands), frontend types + hooks, Composer file picker, ChatView attachment chips, base64 image encoding for vision |
 | 6 — History & Session Restore | **complete** | On startup: load conversation list, auto-restore last session, load saved settings. HistoryView component with open/delete. Session restore logic in App.tsx mount useEffect |
 | 7 — Version Center & Manual Updater | **complete** | `azaleaforge-ctrl/AzaleaHouse` repo wired in; Rust `updater.rs` (4 commands: check/download/cancel/apply), GitHub API check, streaming download with progress events, real VersionCenter UI replaces preview, auto-check on mount, update settings in SettingsScreen |
-| 8 — Quality & Packaging | **not started** — awaiting user approval | — |
+| 8 — Quality & Packaging | **complete** | CSP set, ErrorBoundary added, NSIS config, accessibility audit, bundle 42 modules + 282 kB JS |
 
 ## Phase 2 technical notes
 - **Rust deps added:** `tokio` (macros, net, rt, sync, time), `reqwest` (rustls-tls, stream, json, gzip), `futures-util`
