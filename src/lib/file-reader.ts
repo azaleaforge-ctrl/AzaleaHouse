@@ -597,7 +597,7 @@ async function extractPdf(bytes: Uint8Array): Promise<string> {
     const streamBytes = new Uint8Array(source.length);
     for (let i = 0; i < source.length; i += 1) streamBytes[i] = source.charCodeAt(i) & 0xff;
     try {
-      let decoded = streamBytes;
+      let decoded: Uint8Array = streamBytes;
       if (filterIsFlate) {
         const allowance = Math.min(MAX_PDF_SINGLE_STREAM_DECODE, remainingDecodeBudget);
         // Spend budget before decompression, including on malformed streams.
