@@ -54,7 +54,7 @@ function MessageBubble({
                 {attachment.format === "image" ? "Gambar" : attachment.format === "document" ? "Dokumen" : attachment.format === "text" ? "Teks" : "File"}
                 {" · "}{(attachment.size / 1024).toFixed(1)} KB
               </span>
-              {attachment.error ? <span className="message-attachment-error">Ekstraksi perlu diperiksa</span> : null}
+              {attachment.error ? <span className="message-attachment-error">{attachment.error}</span> : null}
               {attachment.id ? <span className="message-attachment-saved">Tersimpan lokal</span> : null}
             </div>
           ))}
