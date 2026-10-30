@@ -66,7 +66,7 @@ $gpus = @(
     $source = $null
     if ($null -ne $_.AdapterRAM) {
       $candidate = [uint64]$_.AdapterRAM
-      if ($candidate -gt 0 -and $candidate -lt 4294967295) {
+      if ($candidate -gt 0 -and $candidate -lt 4000000000) {
         $vram = $candidate
         $source = 'WMI (perkiraan)'
       }
