@@ -80,7 +80,14 @@ function textFromBytes(bytes: Uint8Array): string {
 }
 
 function latin1FromBytes(bytes: Uint8Array): string {
-  return new TextDecoder("windows-1252", { fatal: false }).decode(bytes);
+  // Preserve every byte value 0x00-0xFF exactly; Windows-1252 would remap 0x80-0x9F
+  // and corrupt compressed PDF stream bytes before FlateDecode.
+  let result = "";
+  const step = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += step) {
+    result += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + step, bytes.length)));
+  }
+  return result;
 }
 
 function startsWithBytes(bytes: Uint8Array, signature: number[]): boolean {
