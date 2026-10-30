@@ -12,6 +12,7 @@ export function Composer({
   onSend,
   onStop,
   busy,
+  hasAttachments,
   thinking,
   onToggleThinking,
   thinkingSupported,
@@ -25,6 +26,7 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   busy: boolean;
+  hasAttachments: boolean;
   thinking: boolean;
   onToggleThinking: () => void;
   thinkingSupported: boolean;
@@ -43,7 +45,7 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_HEIGHT)}px`;
   }, [value]);
 
-  const canSend = value.trim().length > 0 && !busy;
+  const canSend = (value.trim().length > 0 || hasAttachments) && !busy;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -77,7 +79,7 @@ export function Composer({
             <input
               type="file"
               hidden
-              accept=".txt,.md,.markdown,.json,.csv,.ts,.tsx,.js,.jsx,.py,.rs,.toml,.yaml,.yml,.html,.css,.xml,.png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx"
+              accept=".txt,.md,.markdown,.json,.csv,.tsv,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rs,.toml,.yaml,.yml,.html,.htm,.css,.xml,.sql,.sh,.ps1,.java,.c,.h,.cpp,.go,.php,.rb,.swift,.kt,.ini,.log,.env,.vue,.svelte,.astro,.diff,.png,.jpg,.jpeg,.webp,.pdf,.docx,.xlsx"
               onChange={(e) => {
                 if (e.target.files && e.target.files.length > 0) {
                   onAttachFiles(e.target.files);
