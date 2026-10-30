@@ -420,7 +420,7 @@ export default function App() {
 
   // ── Send message: real local model only ──
   const sendMessage = useCallback(
-    (text: string, attached: Attachment[]): boolean => {
+    async (text: string, attached: Attachment[]): Promise<boolean> => {
       const t = text.trim();
       if (t === "" && attached.length === 0) return false;
       if (genState !== "idle") return false;
@@ -494,14 +494,13 @@ export default function App() {
         },
       };
 
-      void invokeChatStart(payload).then((id) => {
-        if (id) {
-          streamIdRef.current = id;
-          lastActivityRef.current = Date.now();
-          return;
-        }
-
-        setMessages((current) => current.filter((message) => message.id !== msgId));
+      const id = await invokeChatStart(payload);
+      if (!id) {
+        // Backend belum menerima pesan: kembalikan chat ke keadaan sebelum kirim,
+        // supaya input pengguna tetap tersedia untuk dicoba ulang.
+        setMessages((current) =>
+          current.filter((message) => message.id !== msgId && message.id !== userMsg.id),
+        );
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         streamIdRef.current = null;
         setGenState("idle");
@@ -509,8 +508,11 @@ export default function App() {
         void invokeRuntimeStatus(settings.ai.model).then((status) => {
           if (status) setRuntimeStatus(status as RuntimeStatus);
         });
-      });
+        return false;
+      }
 
+      streamIdRef.current = id;
+      lastActivityRef.current = Date.now();
       return true;
     },
     [genState, runtimeStatus, settings.ai],
@@ -772,6 +774,7 @@ export default function App() {
               onTogglePanel={() => setPanelOpen((o) => !o)}
               onNewChat={newChat}
               onSend={sendMessage}
+              onClearAttachments={() => setAttachments([])}
               onStop={stopGeneration}
               onRegenerate={regenerate}
               thinking={settings.ai.thinking}
