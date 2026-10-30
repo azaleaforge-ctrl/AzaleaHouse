@@ -4,6 +4,7 @@ import type {
   AppSettings,
   GenState,
   Message,
+  MessageAttachment,
   ProfileId,
   RuntimeStatus,
   View,
@@ -16,8 +17,6 @@ import {
   MAX_FILE_BYTES,
   models,
   profileById,
-  TEXT_EXTENSIONS,
-  IMAGE_EXTENSIONS,
 } from "./data/mock";
 import { clockNow, uid } from "./lib/format";
 import { readAppVersion } from "./lib/tauri";
@@ -43,6 +42,8 @@ import {
   listenUpdateProgress,
   invokeUnloadModel,
   invokeLoadModel,
+  invokeSaveAttachmentBytes,
+  invokeLoadAttachmentBase64,
   listenChatEvents,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -55,6 +56,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
 import { ComingSoon } from "./components/ComingSoon";
 import { IconFile, IconImage } from "./components/Icons";
+import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
 
 function formatConversationTimestamp(value: string): string {
   const date = new Date(value);
@@ -64,6 +66,41 @@ function formatConversationTimestamp(value: string): string {
 
 const AUTO_UNLOAD_IDLE_MS = 60 * 60 * 1000;
 const KEEPALIVE_CHECK_MS = 30 * 1000;
+
+/** Compile only recent, relevant attachment excerpts into model context. */
+async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload["messages"]> {
+  const userMessagesWithAttachments = messages
+    .filter((message) => message.role === "user" && Boolean(message.attachments?.length))
+    .slice(-3);
+  const selectedIds = new Set(userMessagesWithAttachments.map((message) => message.id));
+  const recentAttachments = userMessagesWithAttachments.flatMap((message) => message.attachments ?? []);
+  const latestUser = [...messages].reverse().find((message) => message.role === "user");
+  const attachmentContext = buildAttachmentContext(latestUser?.text ?? "", recentAttachments);
+
+  return Promise.all(messages.map(async (message) => {
+    let images: string[] | undefined;
+    if (message.role === "user" && selectedIds.has(message.id)) {
+      if (message.images?.length) {
+        images = message.images;
+      } else {
+        const imageAttachments = (message.attachments ?? [])
+          .filter((attachment) => attachment.format === "image" && attachment.id)
+          .slice(0, 5);
+        const loaded = await Promise.all(imageAttachments.map(async (attachment) => {
+          const base64 = attachment.id ? await invokeLoadAttachmentBase64(attachment.id) : null;
+          return base64 ?? "";
+        }));
+        const available = loaded.filter(Boolean);
+        if (available.length) images = available;
+      }
+    }
+    return {
+      role: message.role,
+      content: message.text + (message.id === latestUser?.id ? attachmentContext : ""),
+      ...(images?.length ? { images } : {}),
+    };
+  }));
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, blurIntensity: 50 },
@@ -108,57 +145,52 @@ export default function App() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [memoryInitialized, setMemoryInitialized] = useState(false);
 
-  // Handle file attachment: validate, read, and prepare for chat
+  // Parse selected files in memory, then persist accepted bytes to .AzaleaMemory.
   const handleAttachFiles = useCallback(async (fileList: FileList) => {
-    const files = Array.from(fileList).slice(0, 5); // batasi 5 file per pesan
+    const files = Array.from(fileList).slice(0, 5);
     for (const file of files) {
-      const path = file.name; // di Tauri, kita dapat path lengkap via file API atau invoke
-      // Validasi ukuran
       if (file.size > MAX_FILE_BYTES) {
-        setAttachments((prev) => [...prev, {
+        const overLimit: Attachment = {
           name: file.name,
-          path,
+          path: file.name,
           size: file.size,
           format: "other",
-          error: `Ukuran melebihi ${MAX_FILE_BYTES / 1024 / 1024} MB`,
-        }]);
+          error: "Ukuran file melebihi batas 5 MB.",
+        };
+        setAttachments((previous) => [...previous.filter((item) => item.name !== file.name), overLimit]);
         continue;
       }
 
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      const format = IMAGE_EXTENSIONS.includes(ext)
-        ? "image"
-        : TEXT_EXTENSIONS.includes(ext)
-          ? "text"
-          : "other";
-
-      const att: Attachment = {
-        name: file.name,
-        path,
-        size: file.size,
-        format,
-      };
-
-      // Process file content
-      if (format === "image") {
-        // Read image as base64 from File API
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          const base64 = dataUrl.split(",")[1] ?? "";
-          setAttachments((prev) => [...prev.filter((a) => a.name !== file.name), { ...att, base64 }]);
+      try {
+        const parsed = await parseSelectedFile(file);
+        const saved = parsed.base64
+          ? await invokeSaveAttachmentBytes(file.name, parsed.mimeType, parsed.base64)
+          : null;
+        const attachment: Attachment = {
+          name: file.name,
+          path: file.name,
+          size: saved?.size ?? file.size,
+          format: parsed.format,
+          mimeType: saved?.mimeType ?? parsed.mimeType,
+          content: parsed.content,
+          base64: parsed.format === "image" ? parsed.base64 : undefined,
+          id: saved?.id,
+          storagePath: saved?.storagePath,
+          error: parsed.error,
+          storageWarning: parsed.base64 && !saved
+            ? "Lampiran belum tersimpan permanen di .AzaleaMemory; file hanya tersedia selama sesi ini."
+            : undefined,
         };
-        reader.readAsDataURL(file);
-      } else if (format === "text") {
-        // Read text content
-        const text = await file.text();
-        setAttachments((prev) => [...prev.filter((a) => a.name !== file.name), { ...att, content: text.slice(0, 8000) }]);
-      } else {
-        // Unsupported format — show error
-        setAttachments((prev) => [...prev.filter((a) => a.name !== file.name), {
-          ...att,
-          error: `Format .${ext} belum didukung`,
-        }]);
+        setAttachments((previous) => [...previous.filter((item) => item.name !== file.name), attachment]);
+      } catch (error) {
+        const failed: Attachment = {
+          name: file.name,
+          path: file.name,
+          size: file.size,
+          format: "other",
+          error: error instanceof Error ? error.message : "File tidak dapat dibaca.",
+        };
+        setAttachments((previous) => [...previous.filter((item) => item.name !== file.name), failed]);
       }
     }
   }, []);
