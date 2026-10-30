@@ -59,6 +59,20 @@ pub struct ModelMeta {
     pub note: String,
 }
 
+/// Progress reported by Ollama's /api/pull stream. Percent refers to the
+/// currently reported layer when total/completed exist, not estimated RAM load time.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPullProgress {
+    pub model: String,
+    pub status: String,
+    pub digest: Option<String>,
+    pub completed: Option<u64>,
+    pub total: Option<u64>,
+    pub percent: Option<f32>,
+    pub error: Option<String>,
+}
+
 /// Payload chat dari frontend. Diterima sebagai DTO ketat (bukan string mentah).
 #[derive(Deserialize)]
 pub struct ChatRequest {
@@ -311,18 +325,176 @@ pub async fn list_models() -> Result<Vec<ModelMeta>, String> {
     Ok(out)
 }
 
+fn valid_model_reference(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty()
+        && name.len() <= 180
+        && !name.starts_with('/')
+        && !name.ends_with('/')
+        && !name.contains("//")
+        && !name.contains("..")
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '_' | '-' | '.' | ':' | '/' | '@')
+        })
+}
+
+fn emit_model_pull_error(app: &tauri::AppHandle, model: &str, message: &str) {
+    let _ = app.emit(
+        "azalea:model_pull_progress",
+        ModelPullProgress {
+            model: model.to_owned(),
+            status: "error".to_owned(),
+            digest: None,
+            completed: None,
+            total: None,
+            percent: None,
+            error: Some(message.to_owned()),
+        },
+    );
+}
+
+fn process_model_pull_line(
+    app: &tauri::AppHandle,
+    model: &str,
+    line: &[u8],
+) -> Result<bool, String> {
+    if line.iter().all(u8::is_ascii_whitespace) {
+        return Ok(false);
+    }
+    let value: serde_json::Value = serde_json::from_slice(line)
+        .map_err(|error| format!("Respons progres Ollama tidak valid: {error}"))?;
+    if let Some(message) = value.get("error").and_then(|field| field.as_str()) {
+        emit_model_pull_error(app, model, message);
+        return Err(message.to_owned());
+    }
+
+    let status = value
+        .get("status")
+        .and_then(|field| field.as_str())
+        .unwrap_or("Memproses unduhan")
+        .to_owned();
+    let digest = value.get("digest").and_then(|field| field.as_str()).map(str::to_owned);
+    let completed = value.get("completed").and_then(|field| field.as_u64());
+    let total = value.get("total").and_then(|field| field.as_u64());
+    let percent = match (completed, total) {
+        (Some(done), Some(total)) if total > 0 => {
+            Some((done.min(total) as f64 / total as f64 * 100.0) as f32)
+        }
+        _ => None,
+    };
+    let is_success = status.eq_ignore_ascii_case("success");
+
+    let _ = app.emit(
+        "azalea:model_pull_progress",
+        ModelPullProgress {
+            model: model.to_owned(),
+            status,
+            digest,
+            completed,
+            total,
+            percent: if is_success { Some(100.0) } else { percent },
+            error: None,
+        },
+    );
+    Ok(is_success)
+}
+
+/// Download/pull a user-selected model through Ollama's local API.
+/// No shell command is constructed; pulling begins only after an explicit UI action.
+#[tauri::command]
+pub async fn pull_model(app: tauri::AppHandle, model: String) -> Result<(), String> {
+    let model = model.trim().to_owned();
+    if !valid_model_reference(&model) {
+        return Err(
+            "Nama model tidak valid. Gunakan referensi Ollama seperti qwen3:8b atau hf.co/pemilik/model:tag."
+                .to_owned(),
+        );
+    }
+
+    let response = stream_client()
+        .post(format!("{OLLAMA_BASE}/api/pull"))
+        .json(&serde_json::json!({ "model": model, "stream": true }))
+        .send()
+        .await
+        .map_err(|error| {
+            let message = if is_conn_refused(&error) {
+                "Ollama tidak dapat dihubungi. Pastikan Ollama sudah berjalan.".to_owned()
+            } else {
+                format!("Gagal memulai unduhan model dari Ollama: {error}")
+            };
+            emit_model_pull_error(&app, &model, &message);
+            message
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        let message = extract_ollama_error(&text)
+            .unwrap_or_else(|| format!("Ollama menolak unduhan model (HTTP {status}): {text}"));
+        emit_model_pull_error(&app, &model, &message);
+        return Err(message);
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::<u8>::new();
+    let mut received_success = false;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                let message = format!("Unduhan model terputus: {error}. Ollama dapat melanjutkan bagian yang sudah diunduh saat dicoba lagi.");
+                emit_model_pull_error(&app, &model, &message);
+                return Err(message);
+            }
+        };
+        buffer.extend_from_slice(&chunk);
+
+        while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = buffer.drain(..=newline).collect();
+            match process_model_pull_line(&app, &model, &line[..line.len().saturating_sub(1)]) {
+                Ok(true) => received_success = true,
+                Ok(false) => {}
+                Err(message) => return Err(message),
+            }
+        }
+    }
+
+    if !buffer.is_empty() {
+        match process_model_pull_line(&app, &model, &buffer) {
+            Ok(true) => received_success = true,
+            Ok(false) => {}
+            Err(message) => return Err(message),
+        }
+    }
+
+    if !received_success {
+        let message = "Unduhan model berhenti sebelum Ollama mengonfirmasi status success.".to_owned();
+        emit_model_pull_error(&app, &model, &message);
+        return Err(message);
+    }
+    Ok(())
+}
+
 /// Heuristik dukungan fitur berdasarkan nama model — diverifikasi manual di Phase 0.
 /// Nilainya bersumber dari daftar model Ollama, bukan dianggap otomatis.
 fn infer_caps(name: &str) -> (bool, bool, String) {
     let lower = name.to_ascii_lowercase();
     let thinking = lower.contains("gemma4")
         || lower.contains("deepseek-r1")
-        || lower.contains("gemma3:27b")
+        || lower.contains("qwen3")
+        || lower.contains("qwq")
         || lower.contains("o1");
     let vision = lower.contains("gemma4")
-        || lower.contains("gemma3:27b")
+        || lower.contains("gemma3")
         || lower.contains("llava")
-        || lower.contains("phi-3.5-vision");
+        || lower.contains("phi-3.5-vision")
+        || lower.contains("qwen2.5vl")
+        || lower.contains("qwen3-vl")
+        || lower.contains("minicpm-v")
+        || lower.contains("moondream")
+        || lower.contains("granite3.2-vision");
     let note = if thinking && vision {
         "multimodal · mendukung thinking".to_owned()
     } else if thinking {
@@ -763,5 +935,23 @@ mod runtime_lifecycle_tests {
     #[test]
     fn manual_policy_keeps_model_loaded_indefinitely() {
         assert_eq!(keep_alive_for_policy("manual"), serde_json::json!(-1));
+    }
+}
+
+
+#[cfg(test)]
+mod model_manager_tests {
+    use super::valid_model_reference;
+
+    #[test]
+    fn accepts_common_ollama_model_references_without_shell_syntax() {
+        assert!(valid_model_reference("qwen3:8b"));
+        assert!(valid_model_reference("llama3.2:3b"));
+        assert!(valid_model_reference("hf.co/unsloth/model:Q4_K_M"));
+        assert!(!valid_model_reference(""));
+        assert!(!valid_model_reference("../model"));
+        assert!(!valid_model_reference("model;shutdown"));
+        assert!(!valid_model_reference("model name"));
+        assert!(!valid_model_reference("/absolute/model"));
     }
 }

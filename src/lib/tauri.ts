@@ -70,13 +70,38 @@ export interface ModelMeta {
 
 /** Pemanggilan ke `list_models` di Rust. */
 export async function invokeListModels(): Promise<ModelMeta[]> {
-  if (!isTauri()) return [];
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke("list_models");
-  } catch {
-    return [];
-  }
+  if (!isTauri()) throw new Error("Daftar model Ollama hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<ModelMeta[]>("list_models");
+}
+
+export interface ModelPullProgress {
+  model: string;
+  status: string;
+  digest: string | null;
+  completed: number | null;
+  total: number | null;
+  /** Progress for Ollama's currently reported download layer, not the full RAM-load process. */
+  percent: number | null;
+  error: string | null;
+}
+
+/** Pull a model from the Ollama library through the local Ollama API. */
+export async function invokePullModel(model: string): Promise<void> {
+  if (!isTauri()) throw new Error("Unduhan model hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("pull_model", { model });
+}
+
+/** Listen for model-download progress emitted from Ollama's streaming pull API. */
+export async function listenModelPullProgress(
+  onProgress: (progress: ModelPullProgress) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return await listen<ModelPullProgress>("azalea:model_pull_progress", (event) => {
+    onProgress(event.payload);
+  }).then((unlisten) => unlisten);
 }
 
 /** Payload chat ke Rust. */

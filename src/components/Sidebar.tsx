@@ -8,6 +8,7 @@ import {
   IconImage,
   IconPlus,
   IconSettings,
+  IconSparkles,
   LogoMark,
 } from "./Icons";
 
@@ -19,6 +20,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "chat", label: "Chat", icon: <IconChat /> },
+  { id: "local-ai", label: "AI Lokal", icon: <IconSparkles /> },
   { id: "documents", label: "Dokumen", icon: <IconFile /> },
   { id: "images", label: "Gambar", icon: <IconImage /> },
   { id: "history", label: "Riwayat", icon: <IconHistory /> },

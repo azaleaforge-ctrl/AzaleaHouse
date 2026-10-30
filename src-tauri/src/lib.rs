@@ -24,6 +24,7 @@ pub fn run() {
             // Phase 2: Ollama runtime bridge
             ollama::runtime_status,
             ollama::list_models,
+            ollama::pull_model,
             ollama::chat_start,
             ollama::chat_cancel,
             ollama::load_model,

@@ -11,11 +11,10 @@ import type {
 } from "./types";
 import type { Attachment } from "./types";
 import type { UpdateStatus } from "./types";
-import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload } from "./lib/tauri";
+import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload, ModelMeta } from "./lib/tauri";
 import {
   FALLBACK_VERSION,
   MAX_FILE_BYTES,
-  models,
   profileById,
 } from "./data/mock";
 import { clockNow, uid } from "./lib/format";
@@ -24,6 +23,7 @@ import {
   invokeChatCancel,
   invokeChatStart,
   invokeRuntimeStatus,
+  invokeListModels,
   invokeSaveConversation,
   invokeLoadSettings,
   invokeSaveSettings,
@@ -56,6 +56,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
 import { ComingSoon } from "./components/ComingSoon";
 import { DocumentsView } from "./components/DocumentsView";
+import { LocalAiView } from "./components/LocalAiView";
 import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
 
@@ -145,6 +146,8 @@ export default function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>(
     "runtime_unavailable",
   );
+  const [localModels, setLocalModels] = useState<ModelMeta[]>([]);
+  const [modelListError, setModelListError] = useState<string | null>(null);
   const [systemReduced, setSystemReduced] = useState(false);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [memoryPath, setMemoryPath] = useState<string | null>(null);
@@ -249,6 +252,30 @@ export default function App() {
     return list;
   }, []);
 
+  const refreshLocalModels = useCallback(async (): Promise<ModelMeta[]> => {
+    try {
+      const available = await invokeListModels();
+      setLocalModels(available);
+      setModelListError(null);
+      return available;
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Tidak dapat membaca daftar model dari Ollama.";
+      setModelListError(message);
+      setLocalModels([]);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLocalModels();
+  }, [refreshLocalModels]);
+
+  useEffect(() => {
+    if (view === "local-ai") void refreshLocalModels();
+  }, [view, refreshLocalModels]);
+
   useEffect(() => {
     selectedModelRef.current = settings.ai.model;
   }, [settings.ai.model]);
@@ -324,7 +351,6 @@ export default function App() {
         }
         if (saved.ai) {
           const savedAi = { ...(saved.ai as Record<string, unknown>) };
-          if (savedAi.model !== "gemma4:e2b") savedAi.model = DEFAULT_SETTINGS.ai.model;
           setSettings((current) => ({
             ...current,
             ai: { ...current.ai, ...savedAi },
@@ -548,6 +574,9 @@ export default function App() {
           void refreshRuntimeStatus();
           return;
         }
+
+        // Any streamed output confirms the model has finished its initial load.
+        if (e.content || e.thinking) setRuntimeStatus("ready");
 
         // Append thinking / content to the streaming message
         setMessages((m) =>
@@ -797,6 +826,7 @@ export default function App() {
       lastActivityRef.current = Date.now();
       setMessages((current) => [...current, userMsg]);
 
+      if (runtimeStatus === "unloaded") setRuntimeStatus("loading");
       setGenState("generating");
       const msgId = uid();
       streamingMsgIdRef.current = msgId;
@@ -1127,7 +1157,20 @@ export default function App() {
     }
   }, [persistConversation, refreshHistory, setActiveConversationId, stopGeneration]);
 
-  const model = models.find((m) => m.id === settings.ai.model) ?? models[0];
+  const installedModel = localModels.find((item) => item.id === settings.ai.model);
+  const model = installedModel
+    ? {
+        id: installedModel.id,
+        name: installedModel.name,
+        thinkingSupported: installedModel.thinking_supported,
+        note: installedModel.note,
+      }
+    : {
+        id: settings.ai.model,
+        name: settings.ai.model,
+        thinkingSupported: false,
+        note: "Belum terpasang di Ollama lokal",
+      };
 
   // ── Manual model unload ──
   const unloadModel = useCallback(async () => {
@@ -1330,7 +1373,17 @@ export default function App() {
               messages={messages}
               genState={genState}
               animAllowed={animAllowed}
-              modelName={model?.name ?? "Model"}
+              modelName={model?.name ?? settings.ai.model}
+              modelId={settings.ai.model}
+              availableModels={localModels}
+              onModelChange={(modelId) => {
+                const nextModel = localModels.find((item) => item.id === modelId);
+                patchAi({
+                  model: modelId,
+                  thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
+                });
+              }}
+              onOpenLocalAi={() => setView("local-ai")}
               panelOpen={panelOpen}
               onTogglePanel={() => setPanelOpen((o) => !o)}
               onNewChat={newChat}
@@ -1357,6 +1410,7 @@ export default function App() {
           <div className="view-fade">
             <SettingsScreen
               settings={settings}
+              availableModels={localModels}
               onChange={patchSettings}
               onBack={() => setView("chat")}
               runtimeStatus={runtimeStatus}
@@ -1368,6 +1422,27 @@ export default function App() {
               onOpenMemoryFolder={openMemoryFolder}
               onChangeMemoryPath={changeMemoryPath}
               onBackupMemory={backupMemory}
+            />
+          </div>
+        ) : null}
+
+        {view === "local-ai" ? (
+          <div className="view-fade">
+            <LocalAiView
+              models={localModels}
+              modelListError={modelListError}
+              runtimeStatus={runtimeStatus}
+              selectedModel={settings.ai.model}
+              onRefreshModels={refreshLocalModels}
+              onUseModel={(modelId) => {
+                const nextModel = localModels.find((item) => item.id === modelId);
+                patchAi({
+                  model: modelId,
+                  thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
+                });
+                setView("chat");
+              }}
+              onBackToChat={() => setView("chat")}
             />
           </div>
         ) : null}

@@ -1,6 +1,6 @@
 [package]
 name = "azaleahouse"
-version = "0.1.4"
+version = "0.1.5"
 description = "AzaleaHouse — AI assistant lokal untuk Windows"
 authors = ["AzaleaHouse"]
 edition = "2021"
