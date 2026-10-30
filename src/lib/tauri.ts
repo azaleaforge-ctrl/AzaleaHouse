@@ -268,16 +268,19 @@ export async function invokeOpenMemoryFolder(): Promise<boolean> {
   }
 }
 
-/** Migrasi ke path khusus. */
+/** Pilih folder induk secara native; null berarti pengguna membatalkan dialog. */
+export async function invokePickMemoryParentFolder(): Promise<string | null> {
+  if (!isTauri()) throw new Error("Pemilihan folder hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<string | null>("pick_memory_parent_folder");
+}
+
+/** Migrasi memori ke folder induk pilihan pengguna. */
 export async function invokeSetCustomPath(path: string): Promise<boolean> {
-  if (!isTauri()) return false;
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("set_custom_path", { new_path: path });
-    return true;
-  } catch {
-    return false;
-  }
+  if (!isTauri()) throw new Error("Migrasi memori hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_custom_path", { new_path: path });
+  return true;
 }
 
 /** Buat backup .AzaleaMemory. */
