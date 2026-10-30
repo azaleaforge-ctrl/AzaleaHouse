@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -22,7 +23,11 @@ use tokio::sync::{Mutex, oneshot};
 /// Endpoint Ollama yang dipakai. Di masa mendatang bisa jadi konfigurasi user,
 /// tapi untuk MVP selalu ke localhost default.
 const OLLAMA_BASE: &str = "http://127.0.0.1:11434";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+// Limit inactivity between streamed reads, not the total generation duration.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MODEL_OPERATION_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Satus runtime yang sama dengan kosakata di frontend (PRD 9.1).
 pub type RuntimeStatus = String;
@@ -128,15 +133,45 @@ pub struct ChatError {
     pub message: String,
 }
 
-/// State global: mengikat token pembatalan tiap stream yang sedang jalan.
-pub struct ActiveStreams(pub Mutex<HashMap<String, oneshot::Sender<()>>>);
+/// Shared registry lets each worker remove its entry on every completion path.
+pub struct ActiveStreams(pub Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>);
 
+/// Short bounded requests: runtime status and model-list metadata.
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
         .no_gzip()
         .build()
         .expect("reqwest client")
+}
+
+/// Streaming requests have no total deadline; timeout applies only when no bytes
+/// arrive for the configured interval. Long model generation is therefore allowed.
+fn stream_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(STREAM_IDLE_TIMEOUT)
+        .no_gzip()
+        .build()
+        .expect("reqwest streaming client")
+}
+
+/// Loading/unloading a local model can take a while; still bound stalled reads.
+fn model_operation_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(MODEL_OPERATION_IDLE_TIMEOUT)
+        .no_gzip()
+        .build()
+        .expect("reqwest model-operation client")
+}
+
+async fn remove_active_stream(
+    active_streams: &Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
+    id: &str,
+) {
+    active_streams.lock().await.remove(id);
 }
 
 /// Periksa apakah binary `ollama` ada di PATH (untuk petunjuk, bukan eksekusi).
@@ -289,22 +324,36 @@ pub async fn chat_start(
     let id = format!("{}-{}", payload.model, nanos);
     let model_label = payload.model.clone();
 
-    // Daftarkan token pembatalan. Jika sudah ada stream dengan id sama, batal dulu.
+    // Shared registry lets the worker clean up its active ID on every path.
+    let active_streams = state.0.clone();
     let (tx, rx) = oneshot::channel::<()>();
     {
-        let mut map = state.0.lock().await;
-        if let Some(prev) = map.remove(&id) {
-            let _ = prev.send(());
+        let mut map = active_streams.lock().await;
+        if let Some(previous) = map.remove(&id) {
+            let _ = previous.send(());
         }
         map.insert(id.clone(), tx);
     }
 
-    // Clone diperlukan agar task berkelanjutan dan tidak memegang lock.
-    tokio::spawn(chat_worker(app.clone(), id.clone(), payload, rx));
+    // Emit the started event before the worker can emit chunks/errors, preserving
+    // event ordering for the frontend's stream-ID filter.
+    if let Err(error) = app.emit(
+        "azalea:chat_started",
+        serde_json::json!({ "id": id, "model": model_label }),
+    ) {
+        if let Some(tx) = active_streams.lock().await.remove(&id) {
+            let _ = tx.send(());
+        }
+        return Err(format!("Gagal memulai stream: {error}"));
+    }
 
-    // Eikon: beri tahu frontend stream dimulai.
-    app.emit("azalea:chat_started", serde_json::json!({ "id": id, "model": model_label }))
-        .map_err(|e| format!("Gagal memulai stream: {e}"))?;
+    tokio::spawn(chat_worker(
+        app.clone(),
+        id.clone(),
+        payload,
+        rx,
+        active_streams.clone(),
+    ));
     Ok(id)
 }
 
@@ -322,7 +371,7 @@ pub async fn chat_cancel(state: State<'_, ActiveStreams>, id: String) -> Result<
 #[tauri::command]
 pub async fn load_model(model: String) -> Result<(), String> {
     // POST /api/generate dengan keep_alive agar model tetap di RAM.
-    let http = client();
+    let http = model_operation_client();
     let body = serde_json::json!({
         "model": model,
         "prompt": "",
@@ -346,7 +395,7 @@ pub async fn load_model(model: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn unload_model(model: String) -> Result<(), String> {
     // POST /api/generate dengan keep_alive=0 untuk mengeluarkan model dari RAM.
-    let http = client();
+    let http = model_operation_client();
     let body = serde_json::json!({
         "model": model,
         "prompt": "",
@@ -372,9 +421,9 @@ async fn chat_worker(
     id: String,
     payload: ChatRequest,
     cancel: oneshot::Receiver<()>,
+    active_streams: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
 ) {
-    let http = client();
-
+    let http = stream_client();
     let req_opts = payload.options;
     let mut body_obj = serde_json::json!({
         "model": payload.model,
@@ -392,34 +441,48 @@ async fn chat_worker(
         }),
     });
 
-    // Gemma 4 mengendalikan thinking lewat token sistem `<|think|>`, bukan
-    // parameter bool `think` (catatan Phase 0). Token ini hanya dikirim bila
-    // pengguna mengaktifkan Thinking secara eksplisit.
+    // Gemma 4 only receives the thinking token when the user explicitly enabled it.
     if payload.think {
         body_obj["system"] = serde_json::Value::String("<|think|>".to_owned());
     }
-    let body = body_obj;
 
-    let result = http
-        .post(format!("{OLLAMA_BASE}/api/chat"))
-        .json(&body)
-        .send()
-        .await;
+    // Cancellation must also work while Ollama is loading the model or waiting for
+    // the initial HTTP response headers, not only after the body starts streaming.
+    tokio::pin!(cancel);
+    let result = tokio::select! {
+        biased;
+        _ = &mut cancel => {
+            remove_active_stream(&active_streams, &id).await;
+            return;
+        }
+        response = http
+            .post(format!("{OLLAMA_BASE}/api/chat"))
+            .json(&body_obj)
+            .send() => response,
+    };
 
     let resp = match result {
-        Ok(r) => r,
-        Err(ref e) if is_conn_refused(e) => {
+        Ok(response) => response,
+        Err(ref error) if is_conn_refused(error) => {
             let _ = emit_error(
                 &app,
                 &id,
                 "ERR_NOT_RUNNING",
-                "Runtime Ollama tidak berjalan. Jalankan `ollama serve` lalu coba lagi.",
+                "Runtime Ollama tidak berjalan. Jalankan Ollama lalu coba lagi.",
             )
             .await;
+            remove_active_stream(&active_streams, &id).await;
             return;
         }
-        Err(e) => {
-            let _ = emit_error(&app, &id, "ERR_REQUEST", &format!("{e}")).await;
+        Err(error) => {
+            let _ = emit_error(
+                &app,
+                &id,
+                "ERR_REQUEST",
+                &format!("Permintaan ke Ollama gagal: {error}"),
+            )
+            .await;
+            remove_active_stream(&active_streams, &id).await;
             return;
         }
     };
@@ -427,82 +490,109 @@ async fn chat_worker(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        let msg = extract_ollama_error(&text).unwrap_or(text);
-        let code = if status == 400 && msg.to_lowercase().contains("thinking") {
+        let message = extract_ollama_error(&text).unwrap_or(text);
+        let code = if status == 400 && message.to_lowercase().contains("thinking") {
             "ERR_THINKING_UNSUPPORTED"
         } else {
             "ERR_HTTP"
         };
-        let _ = emit_error(&app, &id, code, &msg).await;
+        let _ = emit_error(&app, &id, code, &message).await;
+        remove_active_stream(&active_streams, &id).await;
         return;
     }
 
-    // Stream SSE: pisahkan `data: {...}\n\n`
     let stream = resp.bytes_stream();
-    let mut buf = Vec::new();
-    let mut last_done = false;
+    let mut buffer = Vec::new();
+    let mut received_done_marker = false;
+    let mut cancelled = false;
+    let mut stream_error_emitted = false;
 
     tokio::pin!(stream);
-    tokio::pin!(cancel);
-    // Loop dengan pembatalan: pilih antara chunk selanjutnya vs sinyal batal.
     loop {
         let next = tokio::select! {
             biased;
-            _ = &mut cancel => { break; }
-            opt = stream.next() => opt,
+            _ = &mut cancel => {
+                cancelled = true;
+                break;
+            }
+            item = stream.next() => item,
         };
+
         match next {
             Some(Ok(bytes)) => {
-                buf.extend_from_slice(&bytes);
-                while let Some(line) = split_line(&mut buf) {
-                    if let Some(obj) = parse_sse_line(&line) {
-                        if last_done {
+                buffer.extend_from_slice(&bytes);
+                while let Some(line) = split_line(&mut buffer) {
+                    if let Some(object) = parse_sse_line(&line) {
+                        if object.get("done").and_then(|value| value.as_bool()).unwrap_or(false) {
+                            received_done_marker = true;
+                            let _ = emit_done(&app, &id, &object).await;
                             break;
                         }
-                        // done marker
-                        if obj.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
-                            last_done = true;
-                            let _ = emit_done(&app, &id, &obj).await;
-                            break;
-                        }
-                        let model = obj.get("model").and_then(|m| m.as_str()).unwrap_or("").to_owned();
-                        let msg = obj.get("message").and_then(|m| m.as_object());
-                        let content = msg
-                            .and_then(|m| m.get("content"))
-                            .and_then(|c| c.as_str())
+
+                        let model = object
+                            .get("model")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("")
+                            .to_owned();
+                        let message = object.get("message").and_then(|value| value.as_object());
+                        let content = message
+                            .and_then(|value| value.get("content"))
+                            .and_then(|value| value.as_str())
                             .map(str::to_owned);
-                        let thinking = msg
-                            .and_then(|m| m.get("thinking"))
-                            .and_then(|t| t.as_str())
+                        let thinking = message
+                            .and_then(|value| value.get("thinking"))
+                            .and_then(|value| value.as_str())
                             .map(str::to_owned);
-                        if content.is_none() && thinking.is_none() && obj.get("done").is_none() {
+
+                        if content.is_none() && thinking.is_none() && object.get("done").is_none() {
                             continue;
                         }
                         let _ = app.emit(
                             "azalea:chat_chunk",
-                            serde_json::json!({ "id": id, "model": model, "content": content, "thinking": thinking }),
+                            serde_json::json!({
+                                "id": id,
+                                "model": model,
+                                "content": content,
+                                "thinking": thinking
+                            }),
                         );
                     }
                 }
-                if last_done {
+                if received_done_marker {
                     break;
                 }
             }
-            Some(Err(e)) => {
-                let _ = emit_error(&app, &id, "ERR_STREAM", &format!("Stream putus: {e}")).await;
+            Some(Err(error)) => {
+                let _ = emit_error(
+                    &app,
+                    &id,
+                    "ERR_STREAM",
+                    &format!("Stream respons terputus: {error}"),
+                )
+                .await;
+                stream_error_emitted = true;
                 break;
             }
-            None => {
-                // Stream selesai normal
-                break;
-            }
+            None => break,
         }
     }
 
+    if !received_done_marker && !cancelled && !stream_error_emitted {
+        let _ = emit_error(
+            &app,
+            &id,
+            "ERR_STREAM_INCOMPLETE",
+            "Stream Ollama berakhir sebelum respons selesai. Sebagian teks mungkin belum lengkap.",
+        )
+        .await;
+    }
+
+    // Frontend ignores this marker after cancellation/error because it clears its active ID.
     let _ = app.emit(
         "azalea:chat_chunk",
         serde_json::json!({ "id": id, "done": true }),
     );
+    remove_active_stream(&active_streams, &id).await;
 }
 
 async fn emit_error(app: &tauri::AppHandle, id: &str, code: &str, message: &str) {
@@ -562,4 +652,38 @@ fn split_line(buf: &mut Vec<u8>) -> Option<String> {
     let line = String::from_utf8(buf[..nl].to_vec()).ok();
     buf.drain(..=nl);
     line
+}
+
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::{parse_sse_line, split_line};
+
+    #[test]
+    fn parser_ignores_non_data_and_empty_done_frames() {
+        assert!(parse_sse_line("event: message").is_none());
+        assert!(parse_sse_line("data:").is_none());
+        assert!(parse_sse_line("data: [DONE]").is_none());
+    }
+
+    #[test]
+    fn parser_reads_json_sse_data() {
+        let value = parse_sse_line(r#"data: {"done":true,"model":"gemma4:e2b"}"#)
+            .expect("valid data frame");
+        assert_eq!(value.get("done").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            value.get("model").and_then(|v| v.as_str()),
+            Some("gemma4:e2b")
+        );
+    }
+
+    #[test]
+    fn line_splitter_keeps_partial_data_until_newline_arrives() {
+        let mut buffer = b"data: first\ndata: partial".to_vec();
+        assert_eq!(split_line(&mut buffer).as_deref(), Some("data: first"));
+        assert_eq!(buffer, b"data: partial");
+        buffer.extend_from_slice(b"\n");
+        assert_eq!(split_line(&mut buffer).as_deref(), Some("data: partial"));
+        assert!(buffer.is_empty());
+    }
 }
