@@ -14,7 +14,7 @@ export type RuntimeStatus =
   | "error";
 
 export type ProfileId = "quick" | "balanced" | "deep";
-export type ModelId = "gemma4:e2b" | "mini-preview";
+export type ModelId = "gemma4:e2b";
 
 /** Lampiran file yang dipilih pengguna */
 export interface Attachment {
@@ -48,16 +48,14 @@ export interface Message {
   role: "user" | "assistant";
   text: string;
   time: string;
-  /** Konten thinking (rantai penalaran) — hanya jika model mendukung & thinking aktif */
-  thinking?: string;
   /** Apakah pesan ini masih sedang distreaming */
   streaming?: boolean;
   /** Gambar lampiran (base64) untuk pesan ini */
   images?: string[];
 }
 
-/** idle | generating — mock preview atau streaming nyata */
-export type GenState = "idle" | "thinking" | "generating";
+/** Status generasi respons model lokal. */
+export type GenState = "idle" | "generating";
 
 export interface AppearanceSettings {
   bgAnimation: boolean;
