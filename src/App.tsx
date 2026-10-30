@@ -153,7 +153,7 @@ export default function App() {
   const streamingMsgIdRef = useRef<string | null>(null);
   const chatStartPendingRef = useRef(false);
   const cancelBeforeStartRef = useRef(false);
-  const cancelledStreamIdsRef = useRef<Set<string>>(new Set());
+  const cancelledStreamIdsRef = useRef<Map<string, boolean>>(new Map());
   const messagesRef = useRef<Message[]>([]);
   const eventCleanupRef = useRef<(() => void) | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
@@ -286,8 +286,12 @@ export default function App() {
         // If stop/new-chat happened before chat_start resolved, cancel this late ID
         // instead of reviving a stream the UI has already abandoned.
         if (cancelBeforeStartRef.current || cancelledStreamIdsRef.current.has(e.id)) {
-          cancelledStreamIdsRef.current.add(e.id);
-          void invokeChatCancel(e.id);
+          // true means a terminal event was already received while chat_start's
+          // invoke promise was still settling; don't reinsert a completed stream ID.
+          if (cancelledStreamIdsRef.current.get(e.id) !== true) {
+            cancelledStreamIdsRef.current.set(e.id, false);
+            void invokeChatCancel(e.id);
+          }
           return;
         }
         // Capture the ID from events so early chunks don't depend on invoke timing.
@@ -296,7 +300,10 @@ export default function App() {
       onChunk: (e) => {
         // A late stream may still deliver its final event after the user cancelled it.
         if (cancelledStreamIdsRef.current.has(e.id)) {
-          if (e.done) cancelledStreamIdsRef.current.delete(e.id);
+          if (e.done) {
+            if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
+            else cancelledStreamIdsRef.current.delete(e.id);
+          }
           return;
         }
         if (!mounted) return;
@@ -328,7 +335,8 @@ export default function App() {
       },
       onError: (e) => {
         if (cancelledStreamIdsRef.current.has(e.id)) {
-          cancelledStreamIdsRef.current.delete(e.id);
+          if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
+          else cancelledStreamIdsRef.current.delete(e.id);
           return;
         }
         if (!mounted || e.id !== streamIdRef.current) return;
@@ -524,8 +532,12 @@ export default function App() {
       if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
         cancelBeforeStartRef.current = false;
         if (id) {
-          cancelledStreamIdsRef.current.add(id);
-          void invokeChatCancel(id);
+          if (cancelledStreamIdsRef.current.get(id) === true) {
+            cancelledStreamIdsRef.current.delete(id);
+          } else {
+            cancelledStreamIdsRef.current.set(id, false);
+            void invokeChatCancel(id);
+          }
         }
         streamIdRef.current = null;
         return false;
@@ -561,7 +573,7 @@ export default function App() {
     const activeStreamId = streamIdRef.current;
     cancelBeforeStartRef.current = chatStartPendingRef.current;
     if (activeStreamId) {
-      cancelledStreamIdsRef.current.add(activeStreamId);
+      cancelledStreamIdsRef.current.set(activeStreamId, false);
       void invokeChatCancel(activeStreamId);
     }
 
@@ -640,8 +652,12 @@ export default function App() {
       if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
         cancelBeforeStartRef.current = false;
         if (id) {
-          cancelledStreamIdsRef.current.add(id);
-          void invokeChatCancel(id);
+          if (cancelledStreamIdsRef.current.get(id) === true) {
+            cancelledStreamIdsRef.current.delete(id);
+          } else {
+            cancelledStreamIdsRef.current.set(id, false);
+            void invokeChatCancel(id);
+          }
         }
         streamIdRef.current = null;
         return;
@@ -665,7 +681,7 @@ export default function App() {
     setChatError(null);
     cancelBeforeStartRef.current = chatStartPendingRef.current;
     if (streamIdRef.current) {
-      cancelledStreamIdsRef.current.add(streamIdRef.current);
+      cancelledStreamIdsRef.current.set(streamIdRef.current, false);
       void invokeChatCancel(streamIdRef.current);
     }
     // Save current conversation before clearing
