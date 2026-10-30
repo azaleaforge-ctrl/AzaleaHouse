@@ -171,6 +171,7 @@ export default function App() {
   const persistenceTimerRef = useRef<number | null>(null);
   const skipNextPersistenceRef = useRef(false);
   const previousGenStateRef = useRef<GenState>("idle");
+  const suppressAutoSaveRef = useRef(false);
 
   const setActiveConversationId = useCallback((id: string | null) => {
     activeConversationRef.current = id;
@@ -505,6 +506,7 @@ export default function App() {
   // Periodic autosave: keep a single timer alive while stream chunks continue,
   // rather than postponing persistence until a long response has fully stopped.
   useEffect(() => {
+    if (suppressAutoSaveRef.current) return;
     if (!memoryInitialized || !memoryReadyRef.current || messages.length === 0) return;
 
     if (skipNextPersistenceRef.current) {
@@ -524,7 +526,7 @@ export default function App() {
   useEffect(() => {
     const wasGenerating = previousGenStateRef.current === "generating";
     previousGenStateRef.current = genState;
-    if (!wasGenerating || genState !== "idle" || !memoryInitialized || messages.length === 0) return;
+    if (suppressAutoSaveRef.current || !wasGenerating || genState !== "idle" || !memoryInitialized || messages.length === 0) return;
 
     if (persistenceTimerRef.current !== null) {
       window.clearTimeout(persistenceTimerRef.current);
@@ -821,31 +823,37 @@ export default function App() {
 
   // ── Load conversation from history ──
   const openConversation = useCallback(async (id: string) => {
-    if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
-    if (persistenceTimerRef.current !== null) {
-      window.clearTimeout(persistenceTimerRef.current);
-      persistenceTimerRef.current = null;
-    }
-    await persistConversation();
+    // Prevent a cancellation/finalization effect from writing to the session being left.
+    suppressAutoSaveRef.current = true;
+    try {
+      if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
+      if (persistenceTimerRef.current !== null) {
+        window.clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+      }
+      await persistConversation();
 
-    const conversation = await invokeLoadConversation(id);
-    if (!conversation) {
-      setChatError("Percakapan tidak dapat dibuka. File mungkin sudah dipindahkan atau rusak.");
-      return;
-    }
+      const conversation = await invokeLoadConversation(id);
+      if (!conversation) {
+        setChatError("Percakapan tidak dapat dibuka. File mungkin sudah dipindahkan atau rusak.");
+        return;
+      }
 
-    skipNextPersistenceRef.current = true;
-    setActiveConversationId(conversation.id);
-    setMessages(conversation.messages.map((message) => ({
-      id: message.id,
-      role: message.role,
-      text: message.text,
-      time: message.time,
-      streaming: false,
-    })));
-    setAttachments([]);
-    setChatError(null);
-    setView("chat");
+      skipNextPersistenceRef.current = true;
+      setActiveConversationId(conversation.id);
+      setMessages(conversation.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        time: message.time,
+        streaming: false,
+      })));
+      setAttachments([]);
+      setChatError(null);
+      setView("chat");
+    } finally {
+      suppressAutoSaveRef.current = false;
+    }
   }, [persistConversation, setActiveConversationId, stopGeneration]);
 
   // ── Delete a conversation and refresh the persistent history list ──
@@ -854,23 +862,30 @@ export default function App() {
       window.clearTimeout(persistenceTimerRef.current);
       persistenceTimerRef.current = null;
     }
-    if (activeConversationRef.current === id) {
-      if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
-      await persistConversation();
-    }
+    const deletingActive = activeConversationRef.current === id;
+    if (deletingActive) suppressAutoSaveRef.current = true;
 
-    const deleted = await invokeDeleteConversation(id);
-    if (!deleted) {
-      setChatError("Percakapan tidak berhasil dihapus dari penyimpanan lokal.");
-      return;
-    }
+    try {
+      if (deletingActive) {
+        if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
+        await persistConversation();
+      }
 
-    if (activeConversationRef.current === id) {
-      setActiveConversationId(null);
-      setMessages([]);
-      setAttachments([]);
+      const deleted = await invokeDeleteConversation(id);
+      if (!deleted) {
+        setChatError("Percakapan tidak berhasil dihapus dari penyimpanan lokal.");
+        return;
+      }
+
+      if (activeConversationRef.current === id) {
+        setActiveConversationId(null);
+        setMessages([]);
+        setAttachments([]);
+      }
+      await refreshHistory();
+    } finally {
+      if (deletingActive) suppressAutoSaveRef.current = false;
     }
-    await refreshHistory();
   }, [persistConversation, refreshHistory, setActiveConversationId, stopGeneration]);
 
   const model = models.find((m) => m.id === settings.ai.model) ?? models[0];
