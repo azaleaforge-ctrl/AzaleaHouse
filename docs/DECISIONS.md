@@ -49,6 +49,12 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - **Model ID mapping:** frontend `"gemma4:e2b"` matches Ollama model name directly
 - **Runtime status granularity:** `unloaded` (downloaded, not in RAM) still allows chat — Ollama auto-loads on demand
 
+## Development version and release freeze
+
+- The development branch synchronizes application/package metadata to **0.1.1** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- This version change is source/configuration metadata only. It does **not** create a `v0.1.1` tag, GitHub Release, installer upload, or production update.
+- Keep the release freeze in place until the planned repairs and Windows acceptance tests pass and the owner separately authorizes publication.
+
 ## Non-negotiables already encoded in the shell
 - No shell/exec command is exposed to the frontend; the only external process probe is `where ollama` (path detection only, no execution).
 - Version Center in Phase 1 is preview-only: no network call, no download, no install.
