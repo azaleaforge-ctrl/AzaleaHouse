@@ -85,7 +85,7 @@ if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
       $parts = ([string]$row).Split(',')
       if ($parts.Count -ge 2) {
         $gpuName = $parts[0].Trim()
-        $memoryMb = 0
+        $memoryMb = [int64]0
         if ([int64]::TryParse($parts[$parts.Count - 1].Trim(), [ref]$memoryMb) -and $memoryMb -gt 0) {
           foreach ($gpu in $gpus) {
             if ($gpu.name -match 'NVIDIA' -and ($gpu.name -eq $gpuName -or $gpu.name -like ($gpuName + '*'))) {
