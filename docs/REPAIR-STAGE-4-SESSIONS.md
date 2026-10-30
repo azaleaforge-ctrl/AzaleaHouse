@@ -12,7 +12,7 @@ Make local conversations persist under a stable conversation ID, restore the mos
 - Load the conversation directory only after memory-folder initialization finishes.
 - Populate History at startup instead of leaving it empty until a deletion occurs.
 - Keep an active-conversation ref alongside React state so long-lived event handlers do not capture the first-render `null` conversation ID.
-- Debounce transcript saves after messages change and serialize writes so an older asynchronous save cannot overwrite a newer snapshot.
+- Autosave transcript snapshots periodically even while a long response is streaming, flush promptly when generation finishes or is cancelled, and serialize writes so an older asynchronous save cannot overwrite a newer snapshot.
 - Save the current session before creating a new chat or opening another history entry.
 - Prevent a restored conversation from being treated as new activity immediately on load.
 - Write ISO 8601 `updated_at` timestamps so new sessions sort correctly across dates; continue displaying legacy `HH:mm` timestamps.
