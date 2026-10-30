@@ -14,7 +14,7 @@ fn app_version(app: tauri::AppHandle) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(ActiveStreams(tokio::sync::Mutex::new(HashMap::new())))
+        .manage(ActiveStreams(std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()))))
         .manage(updater::DownloadToken::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
