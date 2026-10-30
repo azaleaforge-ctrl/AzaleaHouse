@@ -92,24 +92,6 @@ function MessageBubble({
   );
 }
 
-function ThinkingIndicator() {
-  return (
-    <div className="msg msg--assistant" aria-live="polite">
-      <div className="msg-meta">
-        <span className="msg-author">AzaleaHouse</span>
-      </div>
-      <div className="thinking-bubble">
-        <span className="thinking-dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-        <span>Sedang berpikir…</span>
-      </div>
-    </div>
-  );
-}
-
 export function MessageList({
   messages,
   genState,
@@ -151,7 +133,6 @@ export function MessageList({
             onRegenerate={onRegenerate}
           />
         ))}
-        {genState === "thinking" ? <ThinkingIndicator /> : null}
       </div>
     </div>
   );
