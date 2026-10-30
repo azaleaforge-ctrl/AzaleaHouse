@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.0";
+export const FALLBACK_VERSION = "0.1.1";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -98,11 +98,10 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV010: string[] = [
-  "Rilis pertama pratinjau: shell desktop dengan desain glassmorphism di atas latar senja.",
-  "Sidebar lengkap: navigasi, status runtime, dan Version Center.",
-  "Percakapan pratinjau dengan perender markdown, tabel, dan blok kode.",
-  "Pengaturan tampilan: animasi latar, kurangi gerakan, intensitas blur.",
+export const changelogV011: string[] = [
+  "Build pengembangan 0.1.1: pengamanan operasi filesystem dan validasi migrasi memori lokal.",
+  "Pemindahan lokasi memori memakai dialog folder Windows dan memverifikasi hasil salinan sebelum mengganti lokasi aktif.",
+  "Versi 0.1.1 ini belum diterbitkan sebagai GitHub Release dan tidak menyediakan pemasangan otomatis.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {

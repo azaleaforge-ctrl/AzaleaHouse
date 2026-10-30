@@ -12,6 +12,8 @@ export function SettingsScreen({
   onUnloadModel,
   modelBusy,
   memoryPath,
+  memoryNotice,
+  memoryBusy,
   onOpenMemoryFolder,
   onChangeMemoryPath,
   onBackupMemory,
@@ -23,6 +25,8 @@ export function SettingsScreen({
   onUnloadModel?: () => void;
   modelBusy?: boolean;
   memoryPath?: string | null;
+  memoryNotice?: string | null;
+  memoryBusy?: boolean;
   onOpenMemoryFolder?: () => void;
   onChangeMemoryPath?: () => void;
   onBackupMemory?: () => void;
@@ -52,19 +56,27 @@ export function SettingsScreen({
             control={<code className="path-chip">{memoryPath ?? MEMORY_PATH}</code>}
           />
           <div className="settings-actions">
-            <button type="button" className="btn" onClick={onOpenMemoryFolder} title="Buka folder di Explorer">
+            <button type="button" className="btn" onClick={onOpenMemoryFolder} title="Buka folder di Explorer" disabled={memoryBusy}>
               <IconFolder size={15} />
               Buka Folder
             </button>
-            <button type="button" className="btn" onClick={onChangeMemoryPath} title="Pindahkan folder memori">
+            <button type="button" className="btn" onClick={onChangeMemoryPath} title="Pindahkan folder memori" disabled={memoryBusy}>
               <IconRefresh size={15} />
               Ubah Lokasi
             </button>
-            <button type="button" className="btn" onClick={onBackupMemory} title="Cadangkan data">
+            <button type="button" className="btn" onClick={onBackupMemory} title="Cadangkan data" disabled={memoryBusy}>
               <IconLock size={15} />
               Backup
             </button>
           </div>
+          {memoryNotice ? (
+            <p
+              className="settings-memory-notice"
+              role={memoryNotice.startsWith("Gagal") ? "alert" : "status"}
+            >
+              {memoryNotice}
+            </p>
+          ) : null}
         </section>
 
         <section className="settings-section" aria-labelledby="sec-tampilan">
