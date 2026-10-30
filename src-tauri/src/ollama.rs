@@ -452,6 +452,10 @@ async fn chat_worker(
     let result = tokio::select! {
         biased;
         _ = &mut cancel => {
+            let _ = app.emit(
+                "azalea:chat_chunk",
+                serde_json::json!({ "id": id, "done": true }),
+            );
             remove_active_stream(&active_streams, &id).await;
             return;
         }
