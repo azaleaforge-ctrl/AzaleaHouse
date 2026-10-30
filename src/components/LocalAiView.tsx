@@ -235,10 +235,9 @@ export function LocalAiView({
   const statusIsDone = pullProgress?.status === "success";
   const runtimeIsAvailable = runtimeStatus !== "not_installed" && runtimeStatus !== "runtime_unavailable" && runtimeStatus !== "error";
   const assessedModels = hardware
-    ? MODEL_CATALOG.map((model) => ({ ...model, fit: assessModel(model, hardware) }))
-        .sort((a, b) => fitRank(a.fit) - fitRank(b.fit)
-          || Number(modelTaskMatches(b, modelTask)) - Number(modelTaskMatches(a, modelTask))
-          || a.sizeGb - b.sizeGb)
+    ? MODEL_CATALOG.filter((model) => modelTaskMatches(model, modelTask))
+        .map((model) => ({ ...model, fit: assessModel(model, hardware) }))
+        .sort((a, b) => fitRank(a.fit) - fitRank(b.fit) || a.sizeGb - b.sizeGb)
     : [];
   const bestModel = assessedModels.find((model) => model.fit !== "unsupported") ?? assessedModels[0] ?? null;
   const gpuDescription = hardware?.gpus.length
