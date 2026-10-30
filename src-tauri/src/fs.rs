@@ -694,6 +694,39 @@ fn attachment_signature_is_valid(extension: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// Resolve the attachment directory without following a symlink at the attachments entry.
+async fn attachment_directory(create: bool) -> Result<PathBuf, String> {
+    let base = resolve_memory_path().await;
+    let canonical_base = fs::canonicalize(&base).await
+        .map_err(|error| format!("Folder .AzaleaMemory tidak dapat diverifikasi: {error}"))?;
+    let directory = canonical_base.join("attachments");
+
+    match fs::symlink_metadata(&directory).await {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Folder attachments harus berupa direktori lokal biasa, bukan symlink.".to_string());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+            fs::create_dir(&directory).await
+                .map_err(|error| format!("Gagal membuat folder attachments: {error}"))?;
+            let metadata = fs::symlink_metadata(&directory).await
+                .map_err(|error| format!("Gagal memverifikasi folder attachments: {error}"))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Folder attachments tidak aman.".to_string());
+            }
+        }
+        Err(error) => return Err(format!("Folder attachments tidak dapat dibaca: {error}")),
+    }
+
+    let canonical_directory = fs::canonicalize(&directory).await
+        .map_err(|error| format!("Folder attachments tidak dapat diverifikasi: {error}"))?;
+    if !canonical_directory.starts_with(&canonical_base) {
+        return Err("Folder attachments berada di luar .AzaleaMemory.".to_string());
+    }
+    Ok(canonical_directory)
+}
+
 /// Persist only bytes supplied by a user-selected file; no arbitrary source path is accepted.
 #[tauri::command]
 pub async fn save_attachment_bytes(
@@ -729,10 +762,7 @@ pub async fn save_attachment_bytes(
 
     let _provided_mime = mime_type.unwrap_or_default();
     let mime_type = attachment_mime_for_extension(&extension).to_string();
-    let base = resolve_memory_path().await;
-    let directory = base.join("attachments");
-    fs::create_dir_all(&directory).await
-        .map_err(|error| format!("Gagal menyiapkan folder lampiran lokal: {error}"))?;
+    let directory = attachment_directory(true).await?;
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -766,7 +796,7 @@ pub async fn load_attachment_base64(id: String) -> Result<String, String> {
     {
         return Err("ID lampiran tidak valid.".to_string());
     }
-    let directory = resolve_memory_path().await.join("attachments");
+    let directory = attachment_directory(false).await?;
     let mut entries = fs::read_dir(&directory).await
         .map_err(|error| format!("Folder lampiran tidak dapat dibaca: {error}"))?;
     while let Some(entry) = entries.next_entry().await
