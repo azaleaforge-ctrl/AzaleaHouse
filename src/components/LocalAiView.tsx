@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { LocalHardwareInfo, ModelMeta, ModelPullProgress } from "../lib/tauri";
 import type { RuntimeStatus } from "../types";
-import { IconArrowLeft, IconRefresh, IconSparkles, IconMonitor } from "./Icons";
+import { IconArrowLeft, IconRefresh, IconSparkles } from "./Icons";
 import { invokePullModel, listenModelPullProgress, invokeScanHardware } from "../lib/tauri";
 import "./LocalAiView.css";
 
@@ -283,7 +283,7 @@ export function LocalAiView({
       <section className="local-ai-panel local-ai-hardware-panel" aria-label="Pemindaian spesifikasi dan rekomendasi model">
         <div className="local-ai-panel-heading">
           <div>
-            <h2><IconMonitor size={16} /> Periksa Spesifikasi PC</h2>
+            <h2><IconSparkles size={16} /> Periksa Spesifikasi PC</h2>
             <p>Data dibaca dari Windows secara lokal. Rekomendasi adalah estimasi konservatif, bukan jaminan kecepatan.</p>
           </div>
           <button type="button" className="btn btn--primary" onClick={() => void scanHardware()} disabled={scanningHardware || pulling}>
@@ -417,7 +417,7 @@ export function LocalAiView({
           </div>
           {!hardware ? (
             <div className="local-ai-empty local-ai-catalog-needs-scan">
-              <IconMonitor size={26} />
+              <IconSparkles size={26} />
               <strong>Periksa spesifikasi untuk mengurutkan model</strong>
               <p>Setelah pemindaian, model akan diberi label hijau, kuning, atau merah dan model teratas dipisahkan sebagai rekomendasi utama.</p>
               <button type="button" className="btn btn--primary" onClick={() => void scanHardware()} disabled={scanningHardware}>
@@ -452,8 +452,14 @@ export function LocalAiView({
                     {installed ? (
                       <button type="button" className="btn btn--sm" onClick={() => onUseModel(model.id)}>Gunakan</button>
                     ) : (
-                      <button type="button" className="btn btn--sm" onClick={() => void pull(model.id)} disabled={pulling || scanningHardware}>
-                        {pulling ? "Menunggu…" : "Download"}
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => void pull(model.id)}
+                        disabled={pulling || scanningHardware || model.fit === "unsupported"}
+                        title={model.fit === "unsupported" ? "Tidak disarankan: RAM atau ruang disk berada di bawah batas minimum estimasi." : undefined}
+                      >
+                        {model.fit === "unsupported" ? "Tidak cocok" : pulling ? "Menunggu…" : "Download"}
                       </button>
                     )}
                   </article>
