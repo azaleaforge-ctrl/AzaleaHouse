@@ -26,17 +26,20 @@ Unconfirmed items stay marked **provisional** until the user approves them.
 | T-09 | Updater signing key | **not generated**; unsigned installer execution removed by Phase 1 security containment | Phase 7 remains blocked until official Tauri signature verification is configured |
 
 ## Phase status
-| Phase | State | Evidence |
+
+Statuses below use the phase numbers in the current PRD, not the separate repair-stage numbering.
+
+| PRD phase | State | Evidence / outstanding acceptance |
 |---|---|---|
-| 0 — Validation & decisions | **complete** — Ollama installed + Gemma 4 E2B pulled + API validated | `ollama list` → `gemma4:e2b` 4.6 GB; direct HTTP chat returns thinking + content |
-| 1 — Desktop shell & design system | **complete** | `npm run build` OK (39 modules, JS 262 kB / CSS 29 kB); `cargo check` OK (2026 crate) |
-| 2 — Runtime bridge & chat | **in progress** — Rust bridge + streaming emit, frontend wired to IPC | `cargo check` clean (0 warnings); `npm run build` clean; Tauri dev launches |
-| 3 — Settings & Runtime Lifecycle | **complete** | cargo check 0 warnings; npm build clean; prod release build OK (40 modules, 270 kB) |
-| 4 — Local Storage & `.AzaleaMemory` | **complete** | Rust `fs.rs` module (9 commands), conversation + settings persistence, directory verified |
-| 5 — File Reader & Vision | **complete** | Rust `fs.rs` file ops (6 commands), frontend types + hooks, Composer file picker, ChatView attachment chips, base64 image encoding for vision |
-| 6 — History & Session Restore | **complete** | On startup: load conversation list, auto-restore last session, load saved settings. HistoryView component with open/delete. Session restore logic in App.tsx mount useEffect |
-| 7 — Version Center & Manual Updater | **partial / blocked** | GitHub metadata check and allow-listed manual download exist; Phase 1 containment removes the unsigned installer-launch command. Official Tauri updater plugin, public verification key, signed `latest.json`, and install/restart flow are not configured or validated |
-| 8 — Quality & Packaging | **complete** | CSP set, ErrorBoundary added, NSIS config, accessibility audit, bundle 42 modules + 282 kB JS |
+| 0 — Validation & decisions | **Previously validated; rerun if environment/model changes** | Earlier record: Ollama + Gemma 4 E2B were tested through the local API. This is not a substitute for the current desktop acceptance matrix. |
+| 1 — Desktop shell & design system | **Implemented; manual acceptance pending** | Tauri/React shell, sidebar, chat layout, settings, and background components exist. |
+| 2 — Runtime bridge & chat | **Implemented; CI passes on main** | Ollama IPC, streaming, cancel, and visible errors exist. Interactive Windows/Ollama smoke tests remain a separate requirement. |
+| 3 — Settings & runtime lifecycle | **Implemented; manual acceptance pending** | Thinking/settings and auto/manual keep-alive code exist; verify the one-hour idle and active-generation edge cases on Windows. |
+| 4 — Local storage & .AzaleaMemory | **Partial; hardening in progress** | Conversation/settings persistence exists. Custom-path migration and backup are under Repair Stage 1; restore, memory deletion controls, and full migration failure acceptance remain incomplete. |
+| 5 — File reader & vision | **Partial** | Text/code extraction and an image request path exist. PDF, DOCX, and XLSX parsers are not implemented; image/runtime acceptance remains pending. Native path-based file commands are deliberately not registered until a selected-file grant flow is wired. |
+| 6 — Document engine | **Not implemented** | Documents view still displays a “coming soon” screen; DOCX/PDF generation and render validation are outstanding. |
+| 7 — Version Center & manual updater | **Partial / blocked** | GitHub metadata check and manual download code exist, but the official signed Tauri updater, signature verification, and Install & Restart are not configured. No GitHub Release is currently published. |
+| 8 — Quality & packaging | **CI infrastructure present; release acceptance pending** | Windows CI checks frontend build and Rust compile/tests. Installer installation/uninstallation, interactive desktop behavior, and end-to-end update tests still need direct acceptance. |
 
 ## Phase 2 technical notes
 - **Rust deps added:** `tokio` (macros, net, rt, sync, time), `reqwest` (rustls-tls, stream, json, gzip), `futures-util`
