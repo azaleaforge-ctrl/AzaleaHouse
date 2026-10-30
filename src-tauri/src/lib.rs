@@ -17,6 +17,7 @@ pub fn run() {
         .manage(ActiveStreams(std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()))))
         .manage(RuntimeOperationLock(std::sync::Arc::new(tokio::sync::Mutex::new(()))))
         .manage(updater::DownloadToken::default())
+        .manage(fs::MemoryPathSelection::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             // Phase 2: Ollama runtime bridge
@@ -39,13 +40,10 @@ pub fn run() {
             fs::pick_memory_parent_folder,
             fs::set_custom_path,
             fs::backup_memory,
-            // Phase 5: File reader & vision
-            fs::read_file_text,
-            fs::encode_image,
-            fs::validate_file,
-            fs::save_attachment,
-            fs::list_attachments,
-            fs::delete_attachment,
+            // File path commands stay unregistered until the attachment flow has
+            // an explicit selected-file grant. The current UI reads only files
+            // the user picked through the WebView file input.
+
             // Phase 7: Version Center & Manual Updater
             updater::check_update,
             updater::download_update,
