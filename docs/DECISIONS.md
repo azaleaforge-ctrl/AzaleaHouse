@@ -49,11 +49,13 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - **Model ID mapping:** frontend `"gemma4:e2b"` matches Ollama model name directly
 - **Runtime status granularity:** `unloaded` (downloaded, not in RAM) still allows chat — Ollama auto-loads on demand
 
-## Development version and release freeze
+## Windows installer distribution and release behavior
 
-- The development branch synchronizes application/package metadata to **0.1.4** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
-- This version change is source/configuration metadata only. It does **not** create a `v0.1.4` tag, GitHub Release, installer upload, or production update.
-- Keep the release freeze in place until the planned repairs and Windows acceptance tests pass and the owner separately authorizes publication.
+- The current app version is synchronized to **0.1.4** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- The Windows release workflow runs on `main`, builds a Windows x64 NSIS installer, runs Rust tests, validates that the installer filename matches the app version, and publishes the `.exe` plus `SHA256SUMS.txt` to GitHub Releases when that version does not already have a release.
+- The first release is intentionally an **unsigned development build**. Windows SmartScreen may warn; the workflow does not claim the checksum is a digital signature and does not configure automatic installer execution.
+- Future releases require synchronized version metadata to be bumped before the corresponding changes are merged to `main`. The workflow does not overwrite an existing release with the same version.
+- Ollama and local model files are not bundled with the installer.
 
 ## Security and behavior boundaries
 
