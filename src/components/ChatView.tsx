@@ -36,7 +36,6 @@ export function ChatView({
   chatError,
   onDismissChatError,
   attachments,
-  hasAttachments,
   onRemoveAttachment,
   onAttachFiles,
 }: {
@@ -60,7 +59,6 @@ export function ChatView({
   chatError: string | null;
   onDismissChatError: () => void;
   attachments: Attachment[];
-  hasAttachments: boolean;
   onRemoveAttachment: (name: string) => void;
   onAttachFiles: (files: FileList) => void;
 }) {
