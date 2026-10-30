@@ -171,6 +171,7 @@ export default function App() {
   // A loaded model at startup starts its idle window from now; zero would cause immediate unload.
   const lastActivityRef = useRef(Date.now());
   const runtimeOperationRef = useRef(false);
+  const selectedModelRef = useRef(settings.ai.model);
   const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
   const previousRuntimeGenStateRef = useRef<GenState>("idle");
   const memoryReadyRef = useRef(false);
@@ -196,6 +197,20 @@ export default function App() {
       time: formatConversationTimestamp(conversation.updated_at),
     })));
     return list;
+  }, []);
+
+  useEffect(() => {
+    selectedModelRef.current = settings.ai.model;
+  }, [settings.ai.model]);
+
+  const refreshRuntimeStatus = useCallback(async () => {
+    const modelId = selectedModelRef.current;
+    const status = await invokeRuntimeStatus(modelId);
+    if (status && selectedModelRef.current === modelId) {
+      setRuntimeStatus(status as RuntimeStatus);
+      if (status === "ready") lastActivityRef.current = Date.now();
+    }
+    return status;
   }, []);
 
   // Versi aplikasi dari Tauri bila tersedia
@@ -461,6 +476,7 @@ export default function App() {
           if (e.done) {
             if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
             else cancelledStreamIdsRef.current.delete(e.id);
+            void refreshRuntimeStatus();
           }
           return;
         }
@@ -474,6 +490,7 @@ export default function App() {
           setGenState("idle");
           setStreamIdRef(null);
           finishStream();
+          void refreshRuntimeStatus();
           return;
         }
 
@@ -496,6 +513,7 @@ export default function App() {
         if (cancelledStreamIdsRef.current.has(e.id)) {
           if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
           else cancelledStreamIdsRef.current.delete(e.id);
+          void refreshRuntimeStatus();
           return;
         }
         if (!mounted || e.id !== streamIdRef.current) return;
@@ -516,6 +534,7 @@ export default function App() {
         setGenState("idle");
         setStreamIdRef(null);
         setChatError(`Respons model terhenti sebelum selesai: ${e.message}`);
+        void refreshRuntimeStatus();
       },
       onDone: () => {
         // Statistik selesai — tidak perlu update UI tambahan
@@ -733,7 +752,7 @@ export default function App() {
           images: message.images,
         })),
         think: settings.ai.thinking,
-        runtimePolicy: settings.ai.runtimePolicy,
+      runtimePolicy: settings.ai.runtimePolicy,
         options: {
           temperature: settings.ai.temperature,
           num_ctx: settings.ai.contextWindow,
@@ -777,9 +796,7 @@ export default function App() {
         setGenState("idle");
         lastActivityRef.current = Date.now();
         setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
-        void invokeRuntimeStatus(settings.ai.model).then((status) => {
-          if (status) setRuntimeStatus(status as RuntimeStatus);
-        });
+        void refreshRuntimeStatus();
         return false;
       }
 
@@ -789,7 +806,7 @@ export default function App() {
       lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
       return true;
     },
-    [genState, runtimeStatus, settings.ai],
+    [genState, runtimeStatus, settings.ai, refreshRuntimeStatus],
   );
 
   // ── Stop / cancel ──
@@ -908,8 +925,9 @@ export default function App() {
       streamIdRef.current = null;
       setGenState("idle");
       setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
+      void refreshRuntimeStatus();
     });
-  }, [genState, runtimeStatus, settings.ai]);
+  }, [genState, runtimeStatus, settings.ai, refreshRuntimeStatus]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
