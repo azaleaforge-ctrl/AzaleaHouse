@@ -119,6 +119,13 @@ export async function invokePullModel(model: string): Promise<void> {
   await invoke("pull_model", { model });
 }
 
+/** Permanently remove one exact model from the local Ollama store. */
+export async function invokeDeleteModel(model: string): Promise<void> {
+  if (!isTauri()) throw new Error("Penghapusan model hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("delete_model", { model });
+}
+
 /** Listen for model-download progress emitted from Ollama's streaming pull API. */
 export async function listenModelPullProgress(
   onProgress: (progress: ModelPullProgress) => void,

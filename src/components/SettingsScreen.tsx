@@ -87,6 +87,23 @@ export function SettingsScreen({
             Tampilan
           </h2>
           <FieldRow
+            label="Tema"
+            desc="Mode gelap dan terang menggunakan wallpaper serta palet warna yang berbeda."
+            control={
+              <Segmented
+                ariaLabel="Tema aplikasi"
+                value={appearance.theme}
+                onChange={(value) =>
+                  onChange({ appearance: { ...appearance, theme: value as "dark" | "light" } })
+                }
+                options={[
+                  { value: "dark", label: "Gelap" },
+                  { value: "light", label: "Terang" },
+                ]}
+              />
+            }
+          />
+          <FieldRow
             label="Animasi latar"
             desc="Gerakan lembut pada langit dan kerlip bintang. Matikan untuk perangkat lambat."
             control={
@@ -110,7 +127,7 @@ export function SettingsScreen({
           />
           <FieldRow
             label="Intensitas blur"
-            desc="Seberapa pekat efek kaca pada panel."
+            desc="Ubah dari 0% (tanpa blur) sampai 100% (blur paling kuat) pada panel kaca."
             stacked
             control={
               <div className="slider-row">
@@ -153,7 +170,9 @@ export function SettingsScreen({
                 }}
                 aria-label="Model"
               >
-                {!availableModels.some((item) => item.id === ai.model) ? (
+                {!ai.model ? (
+                  <option value="">Pilih model AI lokal…</option>
+                ) : !availableModels.some((item) => item.id === ai.model) ? (
                   <option value={ai.model}>{ai.model} · belum terpasang</option>
                 ) : null}
                 {availableModels.map((item) => (

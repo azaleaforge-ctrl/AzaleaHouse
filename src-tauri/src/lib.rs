@@ -27,6 +27,7 @@ pub fn run() {
             ollama::runtime_status,
             ollama::list_models,
             ollama::pull_model,
+            ollama::delete_model,
             ollama::chat_start,
             ollama::chat_cancel,
             ollama::load_model,

@@ -417,3 +417,29 @@ body {
   background: var(--color-rose-400);
   box-shadow: 0 0 8px rgba(242, 136, 155, 0.5);
 }
+
+/* Keep native controls and scrollbars readable under the light palette. */
+.app.app--light ::-webkit-scrollbar-thumb {
+  background-color: rgba(70, 56, 90, .18);
+}
+.app.app--light ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(70, 56, 90, .3);
+}
+.app.app--light * {
+  scrollbar-color: rgba(70, 56, 90, .22) transparent;
+}
+.app.app--light .btn:not(.btn--primary) {
+  background-color: rgba(255,255,255,.46);
+  color: var(--color-text);
+}
+.app.app--light .chip,
+.app.app--light .icon-btn:hover:not(:disabled),
+.app.app--light .local-ai-model-card,
+.app.app--light .local-ai-spec-card,
+.app.app--light .local-ai-recommendation-card {
+  background-color: rgba(255,255,255,.42);
+}
+.app.app--light .chat-model-select option {
+  color: #29233a;
+  background: #fff;
+}

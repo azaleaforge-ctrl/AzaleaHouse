@@ -70,7 +70,9 @@ export type GenState = "idle" | "generating";
 export interface AppearanceSettings {
   bgAnimation: boolean;
   reducedMotion: boolean;
-  /** 0–100, dipetakan ke skala blur 0.4–1.6 */
+  /** Tema visual dengan wallpaper berbeda per mode. */
+  theme: "dark" | "light";
+  /** 0–100; 0 mematikan blur dan 100 memakai blur paling kuat. */
   blurIntensity: number;
 }
 
@@ -92,6 +94,7 @@ export interface AiSettings {
 export interface AppearanceSettings {
   bgAnimation: boolean;
   reducedMotion: boolean;
+  theme: "dark" | "light";
   blurIntensity: number;
 }
 

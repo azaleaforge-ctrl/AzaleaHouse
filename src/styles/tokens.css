@@ -86,3 +86,28 @@
   --sidebar-w: 264px;
   --panel-w: 320px;
 }
+
+/* Daylight theme palette: inherited by the full application shell. */
+.app.app--light {
+  color-scheme: light;
+  --color-ink-950: #f6f2fb;
+  --color-ink-900: #fcfaff;
+  --color-ink-800: #eee9f6;
+  --color-ink-700: #e3dced;
+  --color-ink-600: #d1c7e1;
+  --color-text: #2b263b;
+  --color-text-dim: #5e566f;
+  --color-text-faint: #797188;
+  --color-text-on-accent: #35233b;
+  --glass-bg: rgba(255, 253, 255, .63);
+  --glass-bg-strong: rgba(255, 253, 255, .86);
+  --glass-bg-soft: rgba(255, 253, 255, .46);
+  --glass-border: rgba(76, 60, 102, .16);
+  --glass-border-strong: rgba(76, 60, 102, .28);
+  --glass-highlight: inset 0 1px 0 rgba(255,255,255,.86);
+  --user-bubble-bg: rgba(255, 158, 100, .23);
+  --user-bubble-border: rgba(194, 111, 72, .3);
+  --shadow-1: 0 1px 2px rgba(52, 38, 73, .08), 0 2px 10px rgba(52, 38, 73, .07);
+  --shadow-2: 0 2px 6px rgba(52, 38, 73, .08), 0 12px 32px rgba(52, 38, 73, .12);
+  --shadow-3: 0 6px 16px rgba(52, 38, 73, .12), 0 24px 64px rgba(52, 38, 73, .18);
+}

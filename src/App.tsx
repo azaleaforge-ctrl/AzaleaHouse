@@ -117,11 +117,11 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  appearance: { bgAnimation: true, reducedMotion: false, blurIntensity: 50 },
+  appearance: { bgAnimation: true, reducedMotion: false, theme: "dark", blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
   ai: {
     thinking: false,
-    model: "gemma4:e2b",
+    model: "",
     runtimePolicy: "auto",
     contextWindow: 4096,
     maxOutputTokens: 512,
@@ -351,6 +351,8 @@ export default function App() {
         }
         if (saved.ai) {
           const savedAi = { ...(saved.ai as Record<string, unknown>) };
+          // Drop the previous mock default; installed models now come only from Ollama.
+          if (savedAi.model === "gemma4:e2b") savedAi.model = "";
           setSettings((current) => ({
             ...current,
             ai: { ...current.ai, ...savedAi },
@@ -742,7 +744,7 @@ export default function App() {
   const animAllowed =
     settings.appearance.bgAnimation && !settings.appearance.reducedMotion && !systemReduced;
 
-  const blurScale = 0.4 + (settings.appearance.blurIntensity / 100) * 1.2;
+  const blurScale = (settings.appearance.blurIntensity / 100) * 2;
 
   const patchSettings = useCallback((patch: Partial<AppSettings>) => {
     setSettings((s) => ({ ...s, ...patch }));
@@ -780,6 +782,10 @@ export default function App() {
       if (genState !== "idle") return false;
       if (chatStartPendingRef.current) {
         setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
+        return false;
+      }
+      if (!settings.ai.model || !localModels.some((item) => item.id === settings.ai.model)) {
+        setChatError("Belum ada model AI lokal yang dipilih atau model pilihan tidak lagi terpasang. Buka AI Lokal untuk memilih atau mengunduh model.");
         return false;
       }
 
@@ -911,7 +917,7 @@ export default function App() {
       lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
       return true;
     },
-    [genState, runtimeStatus, settings.ai, refreshRuntimeStatus],
+    [genState, runtimeStatus, settings.ai, localModels, refreshRuntimeStatus],
   );
 
   // ── Stop / cancel ──
@@ -1353,8 +1359,12 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className={rootClass} style={{ "--blur-scale": String(blurScale) } as React.CSSProperties}>
-        <BackgroundLayer animated={animAllowed} />
+      <div
+        className={rootClass + (settings.appearance.theme === "light" ? " app--light" : " app--dark")}
+        style={{ "--blur-scale": String(blurScale) } as React.CSSProperties}
+        data-theme={settings.appearance.theme}
+      >
+        <BackgroundLayer animated={animAllowed} theme={settings.appearance.theme} />
 
         <Sidebar
         view={view}
@@ -1443,6 +1453,10 @@ export default function App() {
                 setView("chat");
               }}
               onBackToChat={() => setView("chat")}
+              onModelDeleted={(modelId) => {
+                if (settings.ai.model === modelId) patchAi({ model: "", thinking: false });
+              }}
+              modelBusy={genState !== "idle" || runtimeStatus === "loading" || runtimeStatus === "unloading"}
             />
           </div>
         ) : null}

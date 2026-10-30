@@ -123,6 +123,7 @@ struct GitHubRelease {
 
 #[derive(Deserialize)]
 struct GitHubAsset {
+    id: u64,
     name: String,
     browser_download_url: String,
     size: u64,
@@ -290,6 +291,149 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     })
 }
 
+
+fn allowed_download_host(host: Option<&str>) -> bool {
+    matches!(
+        host.unwrap_or_default(),
+        "github.com" | "api.github.com" | "release-assets.githubusercontent.com" | "objects.githubusercontent.com"
+    )
+}
+
+/// Retry the direct release URL, then fall back to the official GitHub Releases
+/// API asset endpoint. This keeps traffic on GitHub-owned hosts while handling
+/// intermittent failures in the browser_download_url redirect path.
+async fn request_installer_response(
+    client: &reqwest::Client,
+    url: &Url,
+    asset_name: &str,
+    cancel_receiver: &watch::Receiver<bool>,
+) -> Result<reqwest::Response, String> {
+    let segments: Vec<&str> = url
+        .path_segments()
+        .ok_or_else(|| "Path URL installer tidak valid".to_owned())?
+        .collect();
+    let release_tag = segments
+        .get(4)
+        .ok_or_else(|| "Tag rilis tidak ditemukan pada URL installer".to_owned())?
+        .to_string();
+    if !is_safe_release_tag(&release_tag) {
+        return Err("Tag rilis pada URL installer tidak valid.".to_owned());
+    }
+
+    let mut failures = Vec::new();
+    for attempt in 1..=2 {
+        let result = tokio::select! {
+            biased;
+            _ = wait_for_cancel(cancel_receiver.clone()) => return Err("Unduhan dibatalkan".to_owned()),
+            response = client.get(url.clone()).send() => response,
+        };
+        match result {
+            Ok(response) if response.status().is_success() && allowed_download_host(response.url().host_str()) => {
+                return Ok(response);
+            }
+            Ok(response) => {
+                failures.push(format!(
+                    "URL rilis langsung (percobaan {attempt}): HTTP {} dari {}",
+                    response.status(),
+                    response.url().host_str().unwrap_or("host tidak diketahui")
+                ));
+            }
+            Err(error) => failures.push(format!(
+                "URL rilis langsung (percobaan {attempt}): {error:?}"
+            )),
+        }
+
+        if attempt == 1 {
+            tokio::select! {
+                biased;
+                _ = wait_for_cancel(cancel_receiver.clone()) => return Err("Unduhan dibatalkan".to_owned()),
+                _ = tokio::time::sleep(Duration::from_millis(800)) => {}
+            }
+        }
+    }
+
+    let release_api = format!(
+        "{GITHUB_API}/{GITHUB_OWNER}/{GITHUB_REPO_NAME}/releases/tags/{release_tag}"
+    );
+    let metadata_response = tokio::select! {
+        biased;
+        _ = wait_for_cancel(cancel_receiver.clone()) => return Err("Unduhan dibatalkan".to_owned()),
+        response = client
+            .get(&release_api)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send() => response,
+    }
+    .map_err(|error| {
+        failures.push(format!("GitHub Releases API metadata: {error:?}"));
+        format!(
+            "GitHub gagal diakses melalui URL rilis dan API. Detail: {}",
+            failures.join(" | ")
+        )
+    })?;
+
+    if !metadata_response.status().is_success() {
+        failures.push(format!(
+            "GitHub Releases API metadata: HTTP {}",
+            metadata_response.status()
+        ));
+        return Err(format!(
+            "GitHub gagal diakses melalui URL rilis dan API. Detail: {}",
+            failures.join(" | ")
+        ));
+    }
+
+    let release: GitHubRelease = metadata_response
+        .json()
+        .await
+        .map_err(|error| format!("Metadata fallback GitHub tidak valid: {error}"))?;
+    let asset_id = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == asset_name)
+        .map(|asset| asset.id)
+        .ok_or_else(|| {
+            format!(
+                "Installer {asset_name} tidak ditemukan pada API rilis {release_tag}. Detail percobaan URL: {}",
+                failures.join(" | ")
+            )
+        })?;
+
+    let asset_api = format!(
+        "{GITHUB_API}/{GITHUB_OWNER}/{GITHUB_REPO_NAME}/releases/assets/{asset_id}"
+    );
+    let fallback_response = tokio::select! {
+        biased;
+        _ = wait_for_cancel(cancel_receiver.clone()) => return Err("Unduhan dibatalkan".to_owned()),
+        response = client
+            .get(&asset_api)
+            .header("Accept", "application/octet-stream")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send() => response,
+    }
+    .map_err(|error| {
+        format!(
+            "URL rilis dan endpoint asset API sama-sama gagal. Detail: {}; API: {error:?}",
+            failures.join(" | ")
+        )
+    })?;
+
+    if !fallback_response.status().is_success() {
+        return Err(format!(
+            "GitHub asset API menolak unduhan (HTTP {}). Percobaan langsung: {}",
+            fallback_response.status(),
+            failures.join(" | ")
+        ));
+    }
+    if !allowed_download_host(fallback_response.url().host_str()) {
+        return Err(format!(
+            "GitHub asset API tidak mengarah ke host file resmi yang diizinkan ({})",
+            fallback_response.url().host_str().unwrap_or("host tidak diketahui")
+        ));
+    }
+    Ok(fallback_response)
+}
+
 /// Download is manual and constrained to the official release. The output is not executable
 /// through this app until the official signed-updater flow is configured.
 #[tauri::command(rename_all = "camelCase")]
@@ -334,19 +478,7 @@ pub async fn download_update(
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
-    let send_result = tokio::select! {
-        biased;
-        _ = wait_for_cancel(cancel_receiver.clone()) => return Err("Unduhan dibatalkan".to_string()),
-        result = client.get(url).send() => result,
-    };
-    let resp = send_result.map_err(|e| format!("Unduh gagal: {e}"))?;
-    let resp = resp.error_for_status().map_err(|e| format!("Server menolak unduhan: {e}"))?;
-    if !matches!(
-        resp.url().host_str().unwrap_or_default(),
-        "github.com" | "release-assets.githubusercontent.com" | "objects.githubusercontent.com"
-    ) {
-        return Err("Redirect unduhan menuju host yang tidak diizinkan".into());
-    }
+    let resp = request_installer_response(&client, &url, &asset_name, &cancel_receiver).await?;
 
     let total = resp.content_length().unwrap_or(0);
     if total > MAX_INSTALLER_BYTES {

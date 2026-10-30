@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.7";
+export const FALLBACK_VERSION = "0.1.8";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -18,14 +18,8 @@ export const runtimeStatusLabels: Record<RuntimeStatus, string> = {
   error: "Terjadi kesalahan",
 };
 
-export const models: ModelInfo[] = [
-  {
-    id: "gemma4:e2b",
-    name: "Gemma 4 E2B",
-    thinkingSupported: true,
-    note: "Multimodal · kandidat utama",
-  },
-];
+/** Model inventory is read from the user's local Ollama instance at runtime. */
+export const models: ModelInfo[] = [];
 
 export const profiles: ProfileInfo[] = [
   {
@@ -101,11 +95,11 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV017: string[] = [
-  "Build pengembangan 0.1.7: pemindai CPU, RAM, GPU/VRAM, dan ruang disk untuk rekomendasi model Ollama.",
-  "Model diberi label hijau untuk rekomendasi, kuning untuk kemungkinan berjalan lebih lambat, dan merah bila anggaran memori/disk tidak memadai.",
-  "Rekomendasi utama ditampilkan paling atas; model yang tidak memenuhi batas minimum tidak ditawarkan untuk diunduh dari katalog.",
-  "Jalur updater memakai nama argumen camelCase secara eksplisit di frontend dan command Tauri agar unduhan rilis berikutnya dapat diuji ulang.",
+export const changelogV018: string[] = [
+  "Build pengembangan 0.1.8: mode gelap/terang dengan wallpaper berbeda dan pilihan blur yang diterapkan ke permukaan kaca.",
+  "Menu AI Lokal memfilter model terpasang dan belum terpasang serta mendukung penghapusan model dari penyimpanan Ollama setelah konfirmasi.",
+  "Menghapus katalog Gemma 4 E2B hardcoded; daftar model sepenuhnya diambil dari Ollama dan chat meminta pengguna memilih model terpasang.",
+  "Updater sekarang mencoba ulang URL rilis GitHub lalu memakai endpoint asset API resmi sebagai fallback jika jalur redirect gagal.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {

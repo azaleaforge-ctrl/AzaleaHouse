@@ -325,6 +325,59 @@ pub async fn list_models() -> Result<Vec<ModelMeta>, String> {
     Ok(out)
 }
 
+
+/// Permanently delete an installed model from the user's local Ollama store.
+/// Only exact model names currently returned by /api/tags are accepted.
+#[tauri::command]
+pub async fn delete_model(model: String) -> Result<(), String> {
+    let model = model.trim().to_owned();
+    if !valid_model_reference(&model) {
+        return Err("Nama model tidak valid.".to_owned());
+    }
+
+    let http = client();
+    let tags_response = http
+        .get(format!("{OLLAMA_BASE}/api/tags"))
+        .send()
+        .await
+        .map_err(|error| format!("Gagal membaca model terpasang di Ollama: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Ollama gagal mengembalikan daftar model: {error}"))?;
+    let tags: serde_json::Value = tags_response
+        .json()
+        .await
+        .map_err(|error| format!("Respons daftar model Ollama tidak valid: {error}"))?;
+    let installed = tags
+        .get("models")
+        .and_then(|models| models.as_array())
+        .is_some_and(|models| {
+            models.iter().any(|entry| {
+                entry.get("name").and_then(|name| name.as_str()) == Some(model.as_str())
+            })
+        });
+    if !installed {
+        return Err(format!("Model {model} tidak ditemukan pada daftar model Ollama terpasang."));
+    }
+
+    let response = http
+        .delete(format!("{OLLAMA_BASE}/api/delete"))
+        .json(&serde_json::json!({ "name": model }))
+        .send()
+        .await
+        .map_err(|error| format!("Gagal mengirim permintaan hapus model ke Ollama: {error}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Ollama menolak penghapusan model (HTTP {status}): {body}"));
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(message) = value.get("error").and_then(|value| value.as_str()) {
+            return Err(format!("Ollama gagal menghapus model: {message}"));
+        }
+    }
+    Ok(())
+}
+
 fn valid_model_reference(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty()
@@ -891,12 +944,12 @@ mod streaming_tests {
 
     #[test]
     fn parser_reads_json_sse_data() {
-        let value = parse_sse_line(r#"data: {"done":true,"model":"gemma4:e2b"}"#)
+        let value = parse_sse_line(r#"data: {"done":true,"model":"qwen3:8b"}"#)
             .expect("valid data frame");
         assert_eq!(value.get("done").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(
             value.get("model").and_then(|v| v.as_str()),
-            Some("gemma4:e2b")
+            Some("qwen3:8b")
         );
     }
 

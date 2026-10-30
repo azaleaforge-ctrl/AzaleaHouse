@@ -121,7 +121,9 @@ export function ChatView({
             disabled={genState !== "idle" || runtimeStatus === "loading" || runtimeStatus === "unloading"}
             onChange={(event) => onModelChange(event.target.value)}
           >
-            {!availableModels.some((model) => model.id === modelId) ? (
+            {!modelId ? (
+              <option value="">Pilih model AI lokal…</option>
+            ) : !availableModels.some((model) => model.id === modelId) ? (
               <option value={modelId}>{modelName} · belum terpasang</option>
             ) : null}
             {availableModels.map((model) => (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LocalHardwareInfo, ModelMeta, ModelPullProgress } from "../lib/tauri";
 import type { RuntimeStatus } from "../types";
 import { IconArrowLeft, IconRefresh, IconSparkles } from "./Icons";
-import { invokePullModel, listenModelPullProgress, invokeScanHardware } from "../lib/tauri";
+import { invokePullModel, listenModelPullProgress, invokeScanHardware, invokeDeleteModel, invokeUnloadModel } from "../lib/tauri";
 import "./LocalAiView.css";
 
 function formatBytes(bytes: number): string {
@@ -129,6 +129,8 @@ export function LocalAiView({
   onRefreshModels,
   onUseModel,
   onBackToChat,
+  onModelDeleted,
+  modelBusy,
 }: {
   models: ModelMeta[];
   modelListError: string | null;
@@ -137,6 +139,8 @@ export function LocalAiView({
   onRefreshModels: () => Promise<ModelMeta[]>;
   onUseModel: (modelId: string) => void;
   onBackToChat: () => void;
+  onModelDeleted: (modelId: string) => void;
+  modelBusy: boolean;
 }) {
   const [modelTag, setModelTag] = useState("");
   const [pulling, setPulling] = useState(false);
@@ -147,6 +151,8 @@ export function LocalAiView({
   const [scanningHardware, setScanningHardware] = useState(false);
   const [hardwareError, setHardwareError] = useState<string | null>(null);
   const [modelTask, setModelTask] = useState<ModelTask>("general");
+  const [modelFilter, setModelFilter] = useState<"all" | "installed" | "catalog">("all");
+  const [deletingModel, setDeletingModel] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -236,12 +242,47 @@ export function LocalAiView({
     }
   }
 
+  async function uninstallModel(model: ModelMeta) {
+    if (modelBusy || pulling || scanningHardware || deletingModel) return;
+    const accepted = window.confirm(
+      `Hapus model “${model.name}” dari penyimpanan lokal Ollama? File model yang dihapus tidak bisa dipulihkan tanpa mengunduhnya lagi.`,
+    );
+    if (!accepted) return;
+
+    setDeletingModel(model.id);
+    setNotice({ kind: "info", text: `Menyiapkan penghapusan ${model.name}…` });
+    try {
+      if (selectedModel === model.id && runtimeStatus === "ready") {
+        const unloaded = await invokeUnloadModel(model.id);
+        if (!unloaded) {
+          throw new Error("Model aktif tidak berhasil dilepas dari RAM. Coba matikan model di Pengaturan, lalu ulangi penghapusan.");
+        }
+      }
+      await invokeDeleteModel(model.id);
+      if (selectedModel === model.id) onModelDeleted(model.id);
+      const refreshed = await onRefreshModels();
+      setNotice({
+        kind: "success",
+        text: `Model ${model.name} berhasil dihapus dari Ollama. ${refreshed.length} model masih terpasang.`,
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : `Gagal menghapus model ${model.name}.`,
+      });
+    } finally {
+      setDeletingModel(null);
+    }
+  }
+
   const pullPercent = pullProgress?.percent;
   const statusIsDone = pullProgress?.status === "success";
   const runtimeIsAvailable = runtimeStatus !== "not_installed" && runtimeStatus !== "runtime_unavailable" && runtimeStatus !== "error";
   const assessedModels = hardware
     ? MODEL_CATALOG.filter((model) => modelTaskMatches(model, modelTask))
         .map((model) => ({ ...model, fit: assessModel(model, hardware) }))
+        .filter((model) => modelFilter !== "catalog"
+          || !models.some((installed) => installed.id.toLowerCase() === model.id.toLowerCase()))
         .sort((a, b) => fitRank(a.fit) - fitRank(b.fit) || a.sizeGb - b.sizeGb)
     : [];
   const bestModel = assessedModels.find((model) => model.fit !== "unsupported") ?? assessedModels[0] ?? null;
@@ -284,7 +325,20 @@ export function LocalAiView({
       ) : null}
       {modelListError ? <div className="local-ai-notice is-error" role="alert">{modelListError}</div> : null}
 
-      <section className="local-ai-panel local-ai-hardware-panel" aria-label="Pemindaian spesifikasi dan rekomendasi model">
+      <div className="local-ai-inventory-filters" role="group" aria-label="Filter daftar model AI lokal">
+        <span>Filter model</span>
+        <button type="button" className={modelFilter === "all" ? "is-active" : ""} onClick={() => setModelFilter("all")}>
+          Semua
+        </button>
+        <button type="button" className={modelFilter === "installed" ? "is-active" : ""} onClick={() => setModelFilter("installed")}>
+          Terpasang ({models.length})
+        </button>
+        <button type="button" className={modelFilter === "catalog" ? "is-active" : ""} onClick={() => setModelFilter("catalog")}>
+          Belum diunduh
+        </button>
+      </div>
+
+      <section className="local-ai-panel local-ai-hardware-panel" hidden={modelFilter === "installed"} aria-label="Pemindaian spesifikasi dan rekomendasi model">
         <div className="local-ai-panel-heading">
           <div>
             <h2><IconSparkles size={16} /> Periksa Spesifikasi PC</h2>
@@ -366,7 +420,7 @@ export function LocalAiView({
       </section>
 
       <div className="local-ai-columns">
-        <section className="local-ai-panel">
+        <section className="local-ai-panel" hidden={modelFilter === "catalog"}>
           <div className="local-ai-panel-heading">
             <div>
               <h2>Model terpasang</h2>
@@ -398,9 +452,25 @@ export function LocalAiView({
                         </div>
                       </div>
                     </div>
-                    <button type="button" className={active ? "btn btn--sm btn--primary" : "btn btn--sm"} onClick={() => onUseModel(model.id)}>
-                      {active ? "Sedang dipilih" : "Gunakan di Chat"}
-                    </button>
+                    <div className="local-ai-model-actions">
+                      <button
+                        type="button"
+                        className={active ? "btn btn--sm btn--primary" : "btn btn--sm"}
+                        onClick={() => onUseModel(model.id)}
+                        disabled={modelBusy || deletingModel !== null}
+                      >
+                        {active ? "Sedang dipilih" : "Gunakan di Chat"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--danger"
+                        onClick={() => void uninstallModel(model)}
+                        disabled={modelBusy || pulling || scanningHardware || deletingModel !== null}
+                        title="Hapus file model dari penyimpanan lokal Ollama"
+                      >
+                        {deletingModel === model.id ? "Menghapus…" : "Uninstall"}
+                      </button>
+                    </div>
                   </article>
                 );
               })}
@@ -408,7 +478,7 @@ export function LocalAiView({
           )}
         </section>
 
-        <div className="local-ai-catalog-stack">
+        <div className="local-ai-catalog-stack" hidden={modelFilter === "installed"}>
         <section className="local-ai-panel local-ai-catalog-panel">
           <div className="local-ai-panel-heading">
             <div>
