@@ -225,7 +225,6 @@ export default function App() {
               role: m.role,
               text: m.text,
               time: m.time,
-              thinking: m.thinking,
               streaming: false,
             }))
           );
@@ -307,9 +306,6 @@ export default function App() {
                 text: e.content ? msg.text + e.content : msg.text,
                 streaming: true,
               };
-              if (e.thinking) {
-                updated.thinking = (msg.thinking || "") + e.thinking;
-              }
               return updated;
             }
             return msg;
@@ -388,7 +384,6 @@ export default function App() {
         role: m.role,
         text: m.text,
         time: m.time,
-        thinking: m.thinking,
       })),
     };
     await invokeSaveConversation(stored);
@@ -637,7 +632,6 @@ export default function App() {
           role: m.role,
           text: m.text,
           time: m.time,
-          thinking: m.thinking,
           streaming: false,
         }))
       );
