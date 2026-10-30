@@ -84,6 +84,7 @@ export interface ChatStartPayload {
   model: string;
   messages: Array<{ role: string; content: string; images?: string[] }>;
   think: boolean;
+  runtimePolicy: "auto" | "manual";
   options: {
     temperature?: number;
     num_ctx?: number;
@@ -497,11 +498,14 @@ export function listenUpdateProgress(
 }
 
 /** Preload model agar tetap di RAM (keep-alive 1h). */
-export async function invokeLoadModel(model: string): Promise<boolean> {
+export async function invokeLoadModel(
+  model: string,
+  runtimePolicy: "auto" | "manual",
+): Promise<boolean> {
   if (!isTauri()) return false;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("load_model", { model });
+    await invoke("load_model", { model, runtimePolicy });
     return true;
   } catch {
     return false;

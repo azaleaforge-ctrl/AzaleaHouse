@@ -4,7 +4,7 @@ mod updater;
 
 use std::collections::HashMap;
 
-use ollama::ActiveStreams;
+use ollama::{ActiveStreams, RuntimeOperationLock};
 
 #[tauri::command]
 fn app_version(app: tauri::AppHandle) -> String {
@@ -15,6 +15,7 @@ fn app_version(app: tauri::AppHandle) -> String {
 pub fn run() {
     tauri::Builder::default()
         .manage(ActiveStreams(std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()))))
+        .manage(RuntimeOperationLock(std::sync::Arc::new(tokio::sync::Mutex::new(()))))
         .manage(updater::DownloadToken::default())
         .invoke_handler(tauri::generate_handler![
             app_version,

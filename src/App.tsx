@@ -40,6 +40,7 @@ import {
   invokeCancelDownload,
   listenUpdateProgress,
   invokeUnloadModel,
+  invokeLoadModel,
   listenChatEvents,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -58,6 +59,9 @@ function formatConversationTimestamp(value: string): string {
   if (!value.includes("T") || Number.isNaN(date.getTime())) return value;
   return `${date.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })} · ${date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`;
 }
+
+const AUTO_UNLOAD_IDLE_MS = 60 * 60 * 1000;
+const KEEPALIVE_CHECK_MS = 30 * 1000;
 
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, blurIntensity: 50 },
@@ -164,7 +168,12 @@ export default function App() {
   const messagesRef = useRef<Message[]>([]);
   const eventCleanupRef = useRef<(() => void) | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
-  const lastActivityRef = useRef(0);
+  // A loaded model at startup starts its idle window from now; zero would cause immediate unload.
+  const lastActivityRef = useRef(Date.now());
+  const runtimeOperationRef = useRef(false);
+  const selectedModelRef = useRef(settings.ai.model);
+  const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
+  const previousRuntimeGenStateRef = useRef<GenState>("idle");
   const memoryReadyRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -188,6 +197,20 @@ export default function App() {
       time: formatConversationTimestamp(conversation.updated_at),
     })));
     return list;
+  }, []);
+
+  useEffect(() => {
+    selectedModelRef.current = settings.ai.model;
+  }, [settings.ai.model]);
+
+  const refreshRuntimeStatus = useCallback(async () => {
+    const modelId = selectedModelRef.current;
+    const status = await invokeRuntimeStatus(modelId);
+    if (selectedModelRef.current === modelId) {
+      setRuntimeStatus((status as RuntimeStatus | null) ?? "runtime_unavailable");
+      if (status === "ready") lastActivityRef.current = Date.now();
+    }
+    return status;
   }, []);
 
   // Versi aplikasi dari Tauri bila tersedia
@@ -308,43 +331,127 @@ export default function App() {
   // ── Fetch runtime status on mount & model change ──
   useEffect(() => {
     let alive = true;
+    setRuntimeStatus("loading");
     invokeRuntimeStatus(settings.ai.model).then((status) => {
-      if (alive && status) setRuntimeStatus(status as RuntimeStatus);
+      if (!alive) return;
+      if (!status) {
+        setRuntimeStatus("runtime_unavailable");
+        return;
+      }
+      setRuntimeStatus(status as RuntimeStatus);
+      // A model discovered as loaded starts a fresh idle interval from now.
+      if (status === "ready") lastActivityRef.current = Date.now();
     });
     return () => {
       alive = false;
     };
   }, [settings.ai.model]);
 
-  // ── Keep-alive timer (Fase 3): auto-unload 1h idle in automatic mode ──
+  // Refresh model state once a chat ends. A request that starts from "unloaded"
+  // still leaves a resident model, and that status is needed to arm the idle timer.
   useEffect(() => {
-    // Only active in automatic mode & when model is loaded
-    if (settings.ai.runtimePolicy !== "auto") return;
-    if (runtimeStatus !== "ready") return;
-    if (genState === "generating") return;
+    const previous = previousRuntimeGenStateRef.current;
+    previousRuntimeGenStateRef.current = genState;
+    if (previous !== "generating" || genState !== "idle") return;
 
-    keepaliveTimerRef.current = window.setInterval(() => {
-      const elapsed = Date.now() - lastActivityRef.current;
-      // 1 hour (3600000ms) idle → unload
-      if (elapsed >= 3_600_000) {
-        invokeUnloadModel(settings.ai.model).then(() => {
-          invokeRuntimeStatus(settings.ai.model).then((status) => {
-            if (status) setRuntimeStatus(status as RuntimeStatus);
-          });
-        });
-        // Clear timer; will re-arm on next activity
-        if (keepaliveTimerRef.current) {
-          clearInterval(keepaliveTimerRef.current);
-          keepaliveTimerRef.current = null;
+    void invokeRuntimeStatus(settings.ai.model).then((status) => {
+      if (!status) return;
+      setRuntimeStatus(status as RuntimeStatus);
+      if (status === "ready") lastActivityRef.current = Date.now();
+    });
+  }, [genState, settings.ai.model]);
+
+  // Apply persisted or changed runtime policy to a model already loaded in RAM.
+  // Defer briefly after chat completion so the backend can remove the terminal stream
+  // from its registry before the policy-setting request checks that registry.
+  useEffect(() => {
+    if (runtimeStatus !== "ready" || genState !== "idle") return;
+    if (chatStartPendingRef.current || streamIdRef.current !== null || runtimeOperationRef.current) return;
+
+    const configKey = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+    if (lastAppliedRuntimeConfigRef.current === configKey) return;
+    lastAppliedRuntimeConfigRef.current = configKey;
+    runtimeOperationRef.current = true;
+    let operationStarted = false;
+
+    const timerId = window.setTimeout(() => {
+      operationStarted = true;
+      setRuntimeStatus("loading");
+      void (async () => {
+        try {
+          const loaded = await invokeLoadModel(settings.ai.model, settings.ai.runtimePolicy);
+          if (!loaded) {
+            setChatError("Kebijakan runtime belum berhasil diterapkan ke Ollama. Periksa status runtime lalu coba lagi.");
+          } else {
+            lastActivityRef.current = Date.now();
+          }
+          const refreshed = await invokeRuntimeStatus(settings.ai.model);
+          setRuntimeStatus((refreshed as RuntimeStatus | null) ?? (loaded ? "ready" : "error"));
+        } catch {
+          setChatError("Gagal menerapkan kebijakan runtime ke Ollama.");
+          setRuntimeStatus("error");
+        } finally {
+          runtimeOperationRef.current = false;
         }
-      }
-    }, 60_000); // check every minute
+      })();
+    }, 200);
 
     return () => {
-      if (keepaliveTimerRef.current) {
-        clearInterval(keepaliveTimerRef.current);
-        keepaliveTimerRef.current = null;
-      }
+      window.clearTimeout(timerId);
+      if (!operationStarted) runtimeOperationRef.current = false;
+    };
+  }, [settings.ai.model, settings.ai.runtimePolicy, runtimeStatus, genState]);
+
+  // ── Runtime lifecycle: automatically unload only after a full idle hour ──
+  useEffect(() => {
+    if (settings.ai.runtimePolicy !== "auto" || runtimeStatus !== "ready") return;
+    if (genState !== "idle") return;
+
+    const timerId = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current < AUTO_UNLOAD_IDLE_MS) return;
+      if (
+        chatStartPendingRef.current ||
+        streamIdRef.current !== null ||
+        runtimeOperationRef.current
+      ) return;
+
+      // Lock synchronously before IPC so manual and automatic unload can't overlap.
+      runtimeOperationRef.current = true;
+      setRuntimeStatus("unloading");
+
+      void (async () => {
+        try {
+          const unloaded = await invokeUnloadModel(settings.ai.model);
+          if (!unloaded) {
+            lastActivityRef.current = Date.now();
+            setChatError("Model otomatis gagal dilepas dari RAM. Model tetap tersedia; coba lagi melalui Pengaturan.");
+            const refreshed = await invokeRuntimeStatus(settings.ai.model);
+            setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+            return;
+          }
+
+          const refreshed = await invokeRuntimeStatus(settings.ai.model);
+          // Ollama can briefly report the model as ready after accepting the unload request.
+          setRuntimeStatus(
+            refreshed && refreshed !== "ready"
+              ? refreshed as RuntimeStatus
+              : "unloaded",
+          );
+        } catch {
+          lastActivityRef.current = Date.now();
+          setChatError("Terjadi kesalahan saat melepas model dari RAM. Periksa status Ollama.");
+          const refreshed = await invokeRuntimeStatus(settings.ai.model);
+          setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+        } finally {
+          runtimeOperationRef.current = false;
+        }
+      })();
+    }, KEEPALIVE_CHECK_MS);
+
+    keepaliveTimerRef.current = timerId;
+    return () => {
+      window.clearInterval(timerId);
+      if (keepaliveTimerRef.current === timerId) keepaliveTimerRef.current = null;
     };
   }, [settings.ai.runtimePolicy, runtimeStatus, genState, settings.ai.model]);
 
@@ -373,6 +480,7 @@ export default function App() {
           if (e.done) {
             if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
             else cancelledStreamIdsRef.current.delete(e.id);
+            void refreshRuntimeStatus();
           }
           return;
         }
@@ -380,10 +488,13 @@ export default function App() {
         if (e.id !== streamIdRef.current) return;
 
         if (e.done) {
+          // Start a new idle window from the end of a completed or cancelled stream.
+          lastActivityRef.current = Date.now();
           // Finalise: mark message as not streaming
           setGenState("idle");
           setStreamIdRef(null);
           finishStream();
+          void refreshRuntimeStatus();
           return;
         }
 
@@ -406,9 +517,11 @@ export default function App() {
         if (cancelledStreamIdsRef.current.has(e.id)) {
           if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
           else cancelledStreamIdsRef.current.delete(e.id);
+          void refreshRuntimeStatus();
           return;
         }
         if (!mounted || e.id !== streamIdRef.current) return;
+        lastActivityRef.current = Date.now();
         const failedMessageId = streamingMsgIdRef.current;
         if (failedMessageId) {
           setMessages((current) => {
@@ -425,6 +538,7 @@ export default function App() {
         setGenState("idle");
         setStreamIdRef(null);
         setChatError(`Respons model terhenti sebelum selesai: ${e.message}`);
+        void refreshRuntimeStatus();
       },
       onDone: () => {
         // Statistik selesai — tidak perlu update UI tambahan
@@ -574,6 +688,10 @@ export default function App() {
         setChatError("Penyimpanan lokal masih disiapkan atau tidak tersedia. Tunggu sampai inisialisasi selesai, lalu coba lagi.");
         return false;
       }
+      if (runtimeOperationRef.current) {
+        setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+        return false;
+      }
       if (genState !== "idle") return false;
       if (chatStartPendingRef.current) {
         setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
@@ -619,6 +737,7 @@ export default function App() {
         images: images.length > 0 ? images : undefined,
       };
       const messagesBeforeSend = messagesRef.current;
+      lastActivityRef.current = Date.now();
       setMessages((current) => [...current, userMsg]);
 
       setGenState("generating");
@@ -637,6 +756,7 @@ export default function App() {
           images: message.images,
         })),
         think: settings.ai.thinking,
+      runtimePolicy: settings.ai.runtimePolicy,
         options: {
           temperature: settings.ai.temperature,
           num_ctx: settings.ai.contextWindow,
@@ -678,22 +798,24 @@ export default function App() {
         streamIdRef.current = null;
         cancelBeforeStartRef.current = false;
         setGenState("idle");
+        lastActivityRef.current = Date.now();
         setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
-        void invokeRuntimeStatus(settings.ai.model).then((status) => {
-          if (status) setRuntimeStatus(status as RuntimeStatus);
-        });
+        void refreshRuntimeStatus();
         return false;
       }
 
       streamIdRef.current = id;
       lastActivityRef.current = Date.now();
+      // The chat request itself has applied this keep_alive policy to Ollama.
+      lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
       return true;
     },
-    [genState, runtimeStatus, settings.ai],
+    [genState, runtimeStatus, settings.ai, refreshRuntimeStatus],
   );
 
   // ── Stop / cancel ──
   const stopGeneration = useCallback(() => {
+    lastActivityRef.current = Date.now();
     const messageId = streamingMsgIdRef.current;
     const activeStreamId = streamIdRef.current;
     cancelBeforeStartRef.current = chatStartPendingRef.current;
@@ -728,6 +850,10 @@ export default function App() {
     const current = messagesRef.current;
     const last = current[current.length - 1];
     if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
+    if (runtimeOperationRef.current) {
+      setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+      return;
+    }
 
     if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
       setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
@@ -740,6 +866,7 @@ export default function App() {
     const idx = current.lastIndexOf(userMsg);
     const messagesToSend = current.slice(0, idx + 1);
     setChatError(null);
+    lastActivityRef.current = Date.now();
     setMessages((messages) => messages.slice(0, idx + 1));
     setGenState("generating");
 
@@ -758,6 +885,7 @@ export default function App() {
         images: message.images,
       })),
       think: settings.ai.thinking,
+        runtimePolicy: settings.ai.runtimePolicy,
       options: {
         temperature: settings.ai.temperature,
         num_ctx: settings.ai.contextWindow,
@@ -790,16 +918,20 @@ export default function App() {
       if (id) {
         streamIdRef.current = id;
         lastActivityRef.current = Date.now();
+        // The chat request itself has applied this keep_alive policy to Ollama.
+        lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
         return;
       }
       cancelBeforeStartRef.current = false;
+      lastActivityRef.current = Date.now();
       setMessages((messages) => messages.filter((message) => message.id !== msgId));
       if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
       streamIdRef.current = null;
       setGenState("idle");
       setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
+      void refreshRuntimeStatus();
     });
-  }, [genState, runtimeStatus, settings.ai]);
+  }, [genState, runtimeStatus, settings.ai, refreshRuntimeStatus]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
@@ -899,18 +1031,49 @@ export default function App() {
 
   const model = models.find((m) => m.id === settings.ai.model) ?? models[0];
 
-  // ── Manual model unload (Fase 3) ──
-  const unloadModel = useCallback(() => {
-    if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") return;
-    invokeUnloadModel(settings.ai.model).then((ok) => {
-      if (ok) {
-        keepaliveTimerRef.current = null;
-        invokeRuntimeStatus(settings.ai.model).then((status) => {
-          if (status) setRuntimeStatus(status as RuntimeStatus);
-        });
+  // ── Manual model unload ──
+  const unloadModel = useCallback(async () => {
+    if (runtimeOperationRef.current) {
+      setChatError("Operasi model sedang berlangsung. Tunggu sampai selesai sebelum melepas model.");
+      return;
+    }
+    if (
+      genState !== "idle" ||
+      chatStartPendingRef.current ||
+      streamIdRef.current !== null
+    ) {
+      setChatError("Model tidak bisa dilepas selama chat sedang berjalan. Hentikan atau tunggu respons selesai.");
+      return;
+    }
+    if (runtimeStatus !== "ready") return;
+
+    runtimeOperationRef.current = true;
+    setRuntimeStatus("unloading");
+    try {
+      const unloaded = await invokeUnloadModel(settings.ai.model);
+      if (!unloaded) {
+        lastActivityRef.current = Date.now();
+        setChatError("Gagal melepas model dari RAM. Periksa status Ollama lalu coba lagi.");
+        const refreshed = await invokeRuntimeStatus(settings.ai.model);
+        setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+        return;
       }
-    });
-  }, [runtimeStatus, settings.ai.model]);
+
+      const refreshed = await invokeRuntimeStatus(settings.ai.model);
+      setRuntimeStatus(
+        refreshed && refreshed !== "ready"
+          ? refreshed as RuntimeStatus
+          : "unloaded",
+      );
+    } catch {
+      lastActivityRef.current = Date.now();
+      setChatError("Terjadi kesalahan saat melepas model dari RAM. Periksa status Ollama lalu coba lagi.");
+      const refreshed = await invokeRuntimeStatus(settings.ai.model);
+      setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+    } finally {
+      runtimeOperationRef.current = false;
+    }
+  }, [genState, runtimeStatus, settings.ai.model]);
 
   // ── Memory operations (Fase 4) ──
   const openMemoryFolder = useCallback(() => {
@@ -1033,6 +1196,7 @@ export default function App() {
               onBack={() => setView("chat")}
               runtimeStatus={runtimeStatus}
               onUnloadModel={unloadModel}
+              modelBusy={genState === "generating" || runtimeStatus === "unloading"}
               memoryPath={memoryPath}
               onOpenMemoryFolder={openMemoryFolder}
               onChangeMemoryPath={changeMemoryPath}

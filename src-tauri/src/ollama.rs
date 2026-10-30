@@ -65,7 +65,22 @@ pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessageIn>,
     pub think: bool,
+    #[serde(rename = "runtimePolicy", default = "default_runtime_policy")]
+    pub runtime_policy: String,
     pub options: ChatOptions,
+}
+
+fn default_runtime_policy() -> String {
+    "auto".to_owned()
+}
+
+fn keep_alive_for_policy(runtime_policy: &str) -> serde_json::Value {
+    if runtime_policy == "manual" {
+        // Ollama API supports a negative number to keep the model loaded indefinitely.
+        serde_json::json!(-1)
+    } else {
+        serde_json::json!("1h")
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -135,6 +150,13 @@ pub struct ChatError {
 
 /// Shared registry lets each worker remove its entry on every completion path.
 pub struct ActiveStreams(pub Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>);
+
+/// Serializes model load/unload transitions against the start of a new chat.
+pub struct RuntimeOperationLock(pub Arc<Mutex<()>>);
+
+fn has_active_chat_streams(active_stream_count: usize) -> bool {
+    active_stream_count > 0
+}
 
 /// Short bounded requests: runtime status and model-list metadata.
 fn client() -> reqwest::Client {
@@ -315,8 +337,11 @@ fn infer_caps(name: &str) -> (bool, bool, String) {
 pub async fn chat_start(
     app: tauri::AppHandle,
     state: State<'_, ActiveStreams>,
+    lifecycle: State<'_, RuntimeOperationLock>,
     payload: ChatRequest,
 ) -> Result<String, String> {
+    // Do not race with model load/unload. Register the new stream while holding the gate.
+    let lifecycle_guard = lifecycle.0.lock().await;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -334,6 +359,7 @@ pub async fn chat_start(
         }
         map.insert(id.clone(), tx);
     }
+    drop(lifecycle_guard);
 
     // Emit the started event before the worker can emit chunks/errors, preserving
     // event ordering for the frontend's stream-ID filter.
@@ -369,14 +395,23 @@ pub async fn chat_cancel(state: State<'_, ActiveStreams>, id: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn load_model(model: String) -> Result<(), String> {
+pub async fn load_model(
+    model: String,
+    runtime_policy: String,
+    lifecycle: State<'_, RuntimeOperationLock>,
+    active_streams: State<'_, ActiveStreams>,
+) -> Result<(), String> {
+    let _lifecycle_guard = lifecycle.0.lock().await;
+    if has_active_chat_streams(active_streams.0.lock().await.len()) {
+        return Err("Model tidak dapat dimuat ulang selama chat sedang berjalan.".to_owned());
+    }
     // POST /api/generate dengan keep_alive agar model tetap di RAM.
     let http = model_operation_client();
     let body = serde_json::json!({
         "model": model,
         "prompt": "",
         "stream": false,
-        "keep_alive": "1h",
+        "keep_alive": keep_alive_for_policy(&runtime_policy),
     });
     let resp = http
         .post(format!("{OLLAMA_BASE}/api/generate"))
@@ -393,7 +428,17 @@ pub async fn load_model(model: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn unload_model(model: String) -> Result<(), String> {
+pub async fn unload_model(
+    model: String,
+    lifecycle: State<'_, RuntimeOperationLock>,
+    active_streams: State<'_, ActiveStreams>,
+) -> Result<(), String> {
+    // Serialize with chat_start so a new request cannot begin between the activity
+    // check and Ollama's unload request.
+    let _lifecycle_guard = lifecycle.0.lock().await;
+    if has_active_chat_streams(active_streams.0.lock().await.len()) {
+        return Err("Model tidak dapat dilepas selama chat sedang berjalan.".to_owned());
+    }
     // POST /api/generate dengan keep_alive=0 untuk mengeluarkan model dari RAM.
     let http = model_operation_client();
     let body = serde_json::json!({
@@ -425,10 +470,12 @@ async fn chat_worker(
 ) {
     let http = stream_client();
     let req_opts = payload.options;
+    let keep_alive = keep_alive_for_policy(&payload.runtime_policy);
     let mut body_obj = serde_json::json!({
         "model": payload.model,
         "messages": payload.messages,
         "stream": true,
+        "keep_alive": keep_alive,
         "options": serde_json::json!({
             "num_ctx": req_opts.num_ctx,
             "num_predict": req_opts.num_predict,
@@ -689,5 +736,32 @@ mod streaming_tests {
         buffer.extend_from_slice(b"\n");
         assert_eq!(split_line(&mut buffer).as_deref(), Some("data: partial"));
         assert!(buffer.is_empty());
+    }
+}
+
+
+#[cfg(test)]
+mod runtime_lifecycle_tests {
+    use super::{has_active_chat_streams, keep_alive_for_policy};
+
+    #[test]
+    fn runtime_transition_is_allowed_when_no_chat_is_active() {
+        assert!(!has_active_chat_streams(0));
+    }
+
+    #[test]
+    fn runtime_transition_is_blocked_when_a_chat_is_active() {
+        assert!(has_active_chat_streams(1));
+        assert!(has_active_chat_streams(3));
+    }
+
+    #[test]
+    fn automatic_policy_keeps_model_loaded_for_one_hour() {
+        assert_eq!(keep_alive_for_policy("auto"), serde_json::json!("1h"));
+    }
+
+    #[test]
+    fn manual_policy_keeps_model_loaded_indefinitely() {
+        assert_eq!(keep_alive_for_policy("manual"), serde_json::json!(-1));
     }
 }
