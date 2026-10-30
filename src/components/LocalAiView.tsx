@@ -78,6 +78,7 @@ function formatGb(gigabytes: number): string {
 
 function assessModel(model: CatalogModel, hardware: LocalHardwareInfo): ModelFit {
   const totalRam = bytesToGb(hardware.ramTotalBytes);
+  const currentlyAvailableRam = bytesToGb(hardware.ramAvailableBytes);
   const freeDisk = bytesToGb(hardware.diskAvailableBytes);
   const gpuRamValues = hardware.gpus
     .map((gpu) => gpu.vramBytes)
@@ -88,6 +89,10 @@ function assessModel(model: CatalogModel, hardware: LocalHardwareInfo): ModelFit
   const diskTooLow = freeDisk < model.minDiskGb;
 
   if (memoryTooLow || diskTooLow) return "unsupported";
+
+  // Low currently available RAM is a yellow warning rather than a red block:
+  // the user may close other applications before loading the model.
+  if (currentlyAvailableRam < model.minRamGb) return "slow";
 
   // Green is deliberately conservative: sufficient RAM plus either enough VRAM,
   // or a very small model likely to remain usable on CPU-only systems.
