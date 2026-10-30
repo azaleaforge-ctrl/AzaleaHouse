@@ -320,7 +320,7 @@ pub async fn pick_memory_parent_folder() -> Result<Option<String>, String> {
                     "-NoProfile",
                     "-STA",
                     "-Command",
-                    r#"Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Pilih folder induk untuk penyimpanan AzaleaHouse'; $dialog.ShowNewFolderButton = $true; $result = $dialog.ShowDialog(); if ($result -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }"#,
+                    r#"[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Pilih folder induk untuk penyimpanan AzaleaHouse'; $dialog.ShowNewFolderButton = $true; $result = $dialog.ShowDialog(); if ($result -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }"#,
                 ])
                 .output()
         })
@@ -530,10 +530,11 @@ async fn copy_memory_for_backup(src: &Path, dst: &Path, is_root: bool) -> std::i
     let mut entries = fs::read_dir(src).await?;
     while let Some(entry) = entries.next_entry().await? {
         let src_path = entry.path();
-        if is_root && entry.file_name().to_str() == Some("backups") {
+        let file_name = entry.file_name();
+        if is_root && file_name.to_string_lossy() == "backups" {
             continue;
         }
-        let dst_path = dst.join(entry.file_name());
+        let dst_path = dst.join(file_name);
         let kind = entry.file_type().await?;
         if kind.is_symlink() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Symbolic link tidak diizinkan dalam backup: {}", src_path.display())));
@@ -889,6 +890,8 @@ mod conversation_storage_tests {
         assert!(!is_safe_attachment_name("../outside.txt"));
         assert!(!is_safe_attachment_name("..\\outside.txt"));
         assert!(!is_safe_attachment_name("C:\\outside.txt"));
+        assert!(!is_safe_attachment_name("C:outside.txt"));
+        assert!(!is_safe_attachment_name("notes.txt:stream"));
         assert!(!is_safe_attachment_name(""));
     }
 }
