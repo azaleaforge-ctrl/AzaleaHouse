@@ -172,6 +172,7 @@ export default function App() {
   const lastActivityRef = useRef(Date.now());
   const runtimeOperationRef = useRef(false);
   const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
+  const previousRuntimeGenStateRef = useRef<GenState>("idle");
   const memoryReadyRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -326,6 +327,20 @@ export default function App() {
       alive = false;
     };
   }, [settings.ai.model]);
+
+  // Refresh model state once a chat ends. A request that starts from "unloaded"
+  // still leaves a resident model, and that status is needed to arm the idle timer.
+  useEffect(() => {
+    const previous = previousRuntimeGenStateRef.current;
+    previousRuntimeGenStateRef.current = genState;
+    if (previous !== "generating" || genState !== "idle") return;
+
+    void invokeRuntimeStatus(settings.ai.model).then((status) => {
+      if (!status) return;
+      setRuntimeStatus(status as RuntimeStatus);
+      if (status === "ready") lastActivityRef.current = Date.now();
+    });
+  }, [genState, settings.ai.model]);
 
   // Apply persisted or changed runtime policy to a model already loaded in RAM.
   // Chat starts and load/unload operations share a backend mutex, so this remains race-safe.
@@ -760,6 +775,8 @@ export default function App() {
 
       streamIdRef.current = id;
       lastActivityRef.current = Date.now();
+      // The chat request itself has applied this keep_alive policy to Ollama.
+      lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
       return true;
     },
     [genState, runtimeStatus, settings.ai],
@@ -802,6 +819,10 @@ export default function App() {
     const current = messagesRef.current;
     const last = current[current.length - 1];
     if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
+    if (runtimeOperationRef.current) {
+      setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+      return;
+    }
 
     if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
       setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
@@ -866,6 +887,8 @@ export default function App() {
       if (id) {
         streamIdRef.current = id;
         lastActivityRef.current = Date.now();
+        // The chat request itself has applied this keep_alive policy to Ollama.
+        lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
         return;
       }
       cancelBeforeStartRef.current = false;

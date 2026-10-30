@@ -185,7 +185,7 @@ export function SettingsScreen({
                   </button>
                 ) : (
                   <span className="field-value">
-                    {runtimeStatus === "loading" ? "Memuat…" : runtimeStatus === "unloading" ? "Melepas…" : "Tidak dimuat"}
+                    {runtimeStatus === "loading" ? "Memperbarui…" : runtimeStatus === "unloading" ? "Melepas…" : "Tidak dimuat"}
                   </span>
                 )
               }
