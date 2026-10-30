@@ -14,8 +14,6 @@ import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload }
 import {
   FALLBACK_VERSION,
   MAX_FILE_BYTES,
-  mockConversation,
-  mockReplies,
   models,
   profileById,
   TEXT_EXTENSIONS,
@@ -77,9 +75,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export default function App() {
   const [view, setView] = useState<View>("chat");
-  const [messages, setMessages] = useState<Message[]>(() =>
-    mockConversation.map((m) => ({ ...m, id: uid() })),
-  );
+  const [messages, setMessages] = useState<Message[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [panelOpen, setPanelOpen] = useState(false);
   const [versionOpen, setVersionOpen] = useState(false);
@@ -96,6 +92,7 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [downloadProgress, setDownloadProgress] = useState<UpdateProgressEvent | null>(null);
   const [history, setHistory] = useState<StoredMessage[]>([]);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   // Handle file attachment: validate, read, and prepare for chat
   const handleAttachFiles = useCallback(async (fileList: FileList) => {
@@ -157,8 +154,6 @@ export default function App() {
   const streamingMsgIdRef = useRef<string | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const eventCleanupRef = useRef<(() => void) | null>(null);
-  const replyIndexRef = useRef(0);
-  const timerRef = useRef<number | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
   const lastActivityRef = useRef(0);
   const memoryReadyRef = useRef(false);
@@ -182,14 +177,6 @@ export default function App() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
-
-  // Bersihkan timer mock saat unmount
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
 
   // Mirror messages to ref for chat_start payload
   useEffect(() => {
@@ -216,7 +203,9 @@ export default function App() {
           setSettings((s) => ({ ...s, appearance: { ...s.appearance, ...(saved.appearance as Record<string, unknown>) } }));
         }
         if (saved.ai) {
-          setSettings((s) => ({ ...s, ai: { ...s.ai, ...(saved.ai as Record<string, unknown>) } }));
+          const savedAi = { ...(saved.ai as Record<string, unknown>) };
+          if (savedAi.model !== "gemma4:e2b") savedAi.model = DEFAULT_SETTINGS.ai.model;
+          setSettings((s) => ({ ...s, ai: { ...s.ai, ...savedAi } }));
         }
       }
     });
@@ -329,20 +318,22 @@ export default function App() {
       },
       onError: (e) => {
         if (!mounted || e.id !== streamIdRef.current) return;
-        setMessages((m) =>
-          m.map((msg) =>
-            msg.id === streamingMsgIdRef.current
-              ? {
-                  ...msg,
-                  text: e.message,
-                  streaming: false,
-                }
-              : msg,
-          ),
-        );
+        const failedMessageId = streamingMsgIdRef.current;
+        if (failedMessageId) {
+          setMessages((current) => {
+            const failed = current.find((msg) => msg.id === failedMessageId);
+            if (!failed || failed.text.trim() === "") {
+              return current.filter((msg) => msg.id !== failedMessageId);
+            }
+            return current.map((msg) =>
+              msg.id === failedMessageId ? { ...msg, streaming: false } : msg,
+            );
+          });
+        }
+        streamingMsgIdRef.current = null;
         setGenState("idle");
         setStreamIdRef(null);
-        finishStream();
+        setChatError(`Respons model terhenti sebelum selesai: ${e.message}`);
       },
       onDone: () => {
         // Statistik selesai — tidak perlu update UI tambahan
@@ -432,20 +423,36 @@ export default function App() {
     }));
   }, []);
 
-  // ── Send message ──
+  // ── Send message: real local model only ──
   const sendMessage = useCallback(
-    (text: string, attached: Attachment[]) => {
+    (text: string, attached: Attachment[]): boolean => {
       const t = text.trim();
-      if (t === "" && attached.length === 0) return;
-      if (genState !== "idle") return;
+      if (t === "" && attached.length === 0) return false;
+      if (genState !== "idle") return false;
 
-      // Build attachment content to include in the prompt
+      if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
+        const readinessMessage: Record<RuntimeStatus, string> = {
+          not_installed: "Ollama belum terpasang. Pasang Ollama terlebih dahulu untuk memakai chat AI lokal.",
+          runtime_unavailable: "Ollama tidak dapat dihubungi. Buka Ollama dan pastikan runtime lokal berjalan, lalu coba lagi.",
+          model_not_downloaded: `Model ${settings.ai.model} belum diunduh. Unduh model tersebut terlebih dahulu, lalu coba lagi.`,
+          loading: "Model masih dimuat. Tunggu sampai status model siap sebelum mengirim pesan.",
+          ready: "",
+          thinking: "Model sedang berpikir. Tunggu sampai respons saat ini selesai.",
+          generating: "Model sedang menghasilkan respons. Tunggu sampai respons saat ini selesai.",
+          unloading: "Model sedang dilepas dari memori. Tunggu sampai proses selesai, lalu coba lagi.",
+          unloaded: "",
+          error: "Runtime AI mengalami kesalahan. Periksa Ollama dan status model, lalu coba lagi.",
+        };
+        setChatError(readinessMessage[runtimeStatus]);
+        return false;
+      }
+
+      setChatError(null);
+
       let attachmentContext = "";
       const images: string[] = [];
       for (const a of attached) {
-        if (a.format === "image" && a.base64) {
-          images.push(a.base64);
-        }
+        if (a.format === "image" && a.base64) images.push(a.base64);
         if (a.content) {
           attachmentContext += `\n\n--- Lampiran: ${a.name} ---\n${a.content.slice(0, 4000)}\n---`;
         }
@@ -454,128 +461,31 @@ export default function App() {
         }
       }
 
-      const fullText = t + attachmentContext;
-      const userMsg: Message = { id: uid(), role: "user", text: fullText, time: clockNow() };
-      setMessages((m) => [...m, userMsg]);
+      const userMsg: Message = {
+        id: uid(),
+        role: "user",
+        text: t + attachmentContext,
+        time: clockNow(),
+        images: images.length > 0 ? images : undefined,
+      };
+      const messagesBeforeSend = messagesRef.current;
+      setMessages((current) => [...current, userMsg]);
 
-      // Runtime ready atau unloaded (Ollama auto-loads on demand) → real streaming
-      if (runtimeStatus === "ready" || runtimeStatus === "unloaded") {
-        setGenState("generating");
-        const msgId = uid();
-        streamingMsgIdRef.current = msgId;
-        setMessages((m) => [...m, { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true }]);
-
-        const payload: ChatStartPayload = {
-          model: settings.ai.model,
-          messages: [...messagesRef.current, { ...userMsg, images }].map((m) => ({
-            role: m.role,
-            content: m.text,
-            images: m.images,
-          })).filter((m) => m.images === undefined || m.images.length > 0 || true),
-          think: settings.ai.thinking,
-          options: {
-            temperature: settings.ai.temperature,
-            num_ctx: settings.ai.contextWindow,
-            num_predict: settings.ai.maxOutputTokens,
-            top_p: settings.ai.topP,
-            top_k: settings.ai.topK,
-            repeat_penalty: settings.ai.repeatPenalty,
-            stop: settings.ai.stopSequences
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
-            seed: settings.ai.seed,
-          },
-        };
-
-        invokeChatStart(payload).then((id) => {
-          if (id) {
-            streamIdRef.current = id;
-            lastActivityRef.current = Date.now();
-          } else {
-            // Backend call failed → fall back to mock
-            fallbackMock(msgId);
-          }
-        });
-        return;
-      }
-
-      // Runtime not ready → mock preview
-      fallbackMock(uid());
-    },
-    [genState, runtimeStatus, settings.ai],
-  );
-
-  /** Simpan fallback mock ke dalam pesan asisten */
-  function fallbackMock(replaceId?: string) {
-    setGenState("thinking");
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      const reply = mockReplies[replyIndexRef.current % mockReplies.length] ?? mockReplies[0] ?? "";
-      replyIndexRef.current += 1;
-      const replyMsg: Message = { id: uid(), role: "assistant", text: reply, time: clockNow() };
-      if (replaceId) {
-        // Replace the placeholder streaming message
-        setMessages((m) =>
-          m.map((msg) => (msg.id === replaceId ? { ...msg, text: reply, streaming: false } : msg)),
-        );
-        streamingMsgIdRef.current = null;
-      } else {
-        setMessages((m) => [...m, replyMsg]);
-      }
-      setGenState("idle");
-      void persistConversation();
-    }, 1100);
-  }
-
-  // ── Stop / cancel ──
-  const stopGeneration = useCallback(() => {
-    // Real stream
-    if (streamIdRef.current) {
-      invokeChatCancel(streamIdRef.current);
-      finishStream();
-    }
-    // Mock timer
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    setGenState("idle");
-    setStreamIdRef(null);
-    setMessages((m) =>
-      m.map((msg) =>
-        msg.id === streamingMsgIdRef.current
-          ? { ...msg, text: msg.text + "*Generasi dihentikan.*", streaming: false }
-          : msg,
-      ),
-    );
-    streamingMsgIdRef.current = null;
-  }, []);
-
-  // ── Regenerate ──
-  const regenerate = useCallback(() => {
-    const current = messagesRef.current;
-    const last = current[current.length - 1];
-    if (!last || last.role !== "assistant" || genState === "generating") return;
-
-    if (runtimeStatus === "ready" || runtimeStatus === "unloaded") {
-      // Cari pesan user terakhir yang dikirim
-      const userMsg = [...current].reverse().find((x) => x.role === "user");
-      if (!userMsg) return;
-
-      const idx = current.lastIndexOf(userMsg);
-      const msgsToSend = current.slice(0, idx + 1);
-
-      // Hapus balasan asisten, tambahkan placeholder streaming
-      setMessages((m) => [...m.slice(0, idx + 1)]);
       setGenState("generating");
       const msgId = uid();
       streamingMsgIdRef.current = msgId;
-      setMessages((m) => [...m, { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true }]);
+      setMessages((current) => [
+        ...current,
+        { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true },
+      ]);
 
       const payload: ChatStartPayload = {
         model: settings.ai.model,
-        messages: msgsToSend.map((m) => ({ role: m.role, content: m.text })),
+        messages: [...messagesBeforeSend, userMsg].map((message) => ({
+          role: message.role,
+          content: message.text,
+          images: message.images,
+        })),
         think: settings.ai.thinking,
         options: {
           temperature: settings.ai.temperature,
@@ -584,35 +494,124 @@ export default function App() {
           top_p: settings.ai.topP,
           top_k: settings.ai.topK,
           repeat_penalty: settings.ai.repeatPenalty,
-          stop: settings.ai.stopSequences
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
+          stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
           seed: settings.ai.seed,
         },
       };
 
-      invokeChatStart(payload).then((id) => {
+      void invokeChatStart(payload).then((id) => {
         if (id) {
           streamIdRef.current = id;
-        } else {
-          fallbackMock(msgId);
+          lastActivityRef.current = Date.now();
+          return;
         }
+
+        setMessages((current) => current.filter((message) => message.id !== msgId));
+        if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+        streamIdRef.current = null;
+        setGenState("idle");
+        setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
+        void invokeRuntimeStatus(settings.ai.model).then((status) => {
+          if (status) setRuntimeStatus(status as RuntimeStatus);
+        });
       });
-    } else {
-      // Mock regenerate
-      const reply = mockReplies[replyIndexRef.current % mockReplies.length] ?? last.text;
-      replyIndexRef.current += 1;
-      setMessages((m) => [...m.slice(0, -1), { ...last, text: reply }]);
+
+      return true;
+    },
+    [genState, runtimeStatus, settings.ai],
+  );
+
+  // ── Stop / cancel ──
+  const stopGeneration = useCallback(() => {
+    const messageId = streamingMsgIdRef.current;
+    const activeStreamId = streamIdRef.current;
+    if (activeStreamId) void invokeChatCancel(activeStreamId);
+
+    if (messageId) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                text: message.text
+                  ? `${message.text}\n\nGenerasi dihentikan.`
+                  : "Generasi dihentikan.",
+                streaming: false,
+              }
+            : message,
+        ),
+      );
     }
+
+    streamingMsgIdRef.current = null;
+    setGenState("idle");
+    setStreamIdRef(null);
+  }, []);
+
+  // ── Regenerate ──
+  const regenerate = useCallback(() => {
+    const current = messagesRef.current;
+    const last = current[current.length - 1];
+    if (!last || last.role !== "assistant" || genState === "generating") return;
+
+    if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
+      setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
+      return;
+    }
+
+    const userMsg = [...current].reverse().find((message) => message.role === "user");
+    if (!userMsg) return;
+
+    const idx = current.lastIndexOf(userMsg);
+    const messagesToSend = current.slice(0, idx + 1);
+    setChatError(null);
+    setMessages((messages) => messages.slice(0, idx + 1));
+    setGenState("generating");
+
+    const msgId = uid();
+    streamingMsgIdRef.current = msgId;
+    setMessages((messages) => [
+      ...messages,
+      { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true },
+    ]);
+
+    const payload: ChatStartPayload = {
+      model: settings.ai.model,
+      messages: messagesToSend.map((message) => ({
+        role: message.role,
+        content: message.text,
+        images: message.images,
+      })),
+      think: settings.ai.thinking,
+      options: {
+        temperature: settings.ai.temperature,
+        num_ctx: settings.ai.contextWindow,
+        num_predict: settings.ai.maxOutputTokens,
+        top_p: settings.ai.topP,
+        top_k: settings.ai.topK,
+        repeat_penalty: settings.ai.repeatPenalty,
+        stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
+        seed: settings.ai.seed,
+      },
+    };
+
+    void invokeChatStart(payload).then((id) => {
+      if (id) {
+        streamIdRef.current = id;
+        lastActivityRef.current = Date.now();
+        return;
+      }
+      setMessages((messages) => messages.filter((message) => message.id !== msgId));
+      if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+      streamIdRef.current = null;
+      setGenState("idle");
+      setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
+    });
   }, [genState, runtimeStatus, settings.ai]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    setChatError(null);
     if (streamIdRef.current) {
       invokeChatCancel(streamIdRef.current);
     }
@@ -643,6 +642,7 @@ export default function App() {
         }))
       );
       setAttachments([]);
+      setChatError(null);
       setView("chat");
     }
   }, []);
@@ -786,6 +786,8 @@ export default function App() {
               profile={settings.ai.profile}
               onProfileChange={applyProfile}
               runtimeStatus={runtimeStatus}
+              chatError={chatError}
+              onDismissChatError={() => setChatError(null)}
               attachments={attachments}
               onRemoveAttachment={(name) => setAttachments((prev) => prev.filter((a) => a.name !== name))}
               onAttachFiles={handleAttachFiles}
