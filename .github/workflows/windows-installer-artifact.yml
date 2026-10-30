@@ -2,7 +2,8 @@ name: Windows Installer Artifact
 
 on:
   push:
-    branches: [main]
+    # Build packaging branches too, so the installer can be tested before this PR is merged.
+    branches: [main, "build/**"]
     paths:
       - ".github/workflows/windows-installer-artifact.yml"
       - "src/**"
