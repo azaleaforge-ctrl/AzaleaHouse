@@ -1,0 +1,162 @@
+name: Build and Publish Windows Release
+
+on:
+  # Main-branch builds create a GitHub Release when the configured app version
+  # does not have one yet. Release branches build/test the installer only.
+  push:
+    branches: [main, "release/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-installer:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Read and validate app version
+        id: app_version
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = [string]$package.version
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "package.json version '$version' is not a valid release version."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Tauri app and NSIS installer
+        run: npm run tauri:build
+
+      - name: Verify installer and create checksum
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.app_version.outputs.version }}
+        run: |
+          $installerDir = "src-tauri/target/release/bundle/nsis"
+          $installers = @(Get-ChildItem -Path $installerDir -Filter "*.exe" -File -ErrorAction SilentlyContinue)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer in $installerDir; found $($installers.Count)."
+          }
+
+          $installer = $installers[0]
+          $expectedPattern = '^AzaleaHouse_' + [regex]::Escape($env:APP_VERSION) + '_.+\.exe$'
+          if ($installer.Name -notmatch $expectedPattern) {
+            throw "Installer filename '$($installer.Name)' does not match expected version $env:APP_VERSION."
+          }
+          if ($installer.Length -le 0) {
+            throw "The generated installer is empty."
+          }
+
+          $hash = (Get-FileHash -Path $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -Path "SHA256SUMS.txt" -Encoding ascii
+
+          @(
+            "## Windows installer build"
+            ""
+            "- Version: $env:APP_VERSION"
+            "- File: $($installer.Name)"
+            "- Size: $([math]::Round($installer.Length / 1MB, 2)) MiB"
+            "- SHA-256: $hash"
+            "- Source commit: $env:GITHUB_SHA"
+            ""
+            "The installer is unsigned. It is published as a Windows x64 setup executable. Ollama and local model files are not bundled."
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Check whether this version already has a GitHub Release
+        id: release_check
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_VERSION: ${{ steps.app_version.outputs.version }}
+        run: |
+          $tag = "v$env:APP_VERSION"
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          try {
+            $null = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+            "publish=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Release $tag already exists. Keeping the existing release immutable; bump the app version for a new release."
+          } catch {
+            $statusCode = 0
+            if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            if ($statusCode -eq 404) {
+              "publish=true" >> $env:GITHUB_OUTPUT
+              Write-Host "Release $tag does not exist yet; it will be published after the build succeeds."
+            } else {
+              throw
+            }
+          }
+
+      - name: Publish installer to GitHub Releases
+        if: github.ref == 'refs/heads/main' && steps.release_check.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.app_version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: AzaleaHouse v${{ steps.app_version.outputs.version }}
+          body: |
+            ## AzaleaHouse v${{ steps.app_version.outputs.version }} — Windows x64
+
+            Download the `.exe` setup installer from **Assets** below and run it to install AzaleaHouse for the current Windows user.
+
+            ### Before installing
+            - This is an **unsigned development build**. Windows SmartScreen or antivirus software may show a warning.
+            - `SHA256SUMS.txt` contains the SHA-256 checksum for verifying that the installer matches the published file.
+            - Ollama and the desired local model are not bundled. Install/configure Ollama separately for local AI chat.
+
+            A new release is published only when the version in `package.json` does not already have a GitHub Release. Bump the app version when shipping a subsequent update.
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifact for branch testing
+        if: github.ref != 'refs/heads/main' || steps.release_check.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AzaleaHouse-Installer-v${{ steps.app_version.outputs.version }}-Windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

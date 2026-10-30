@@ -1,22 +1,22 @@
-# Installing the current Windows development build
+# Install AzaleaHouse from GitHub Releases
 
-AzaleaHouse's GitHub **Releases** page may be empty while production releases are intentionally frozen. The Windows installer is therefore delivered as a temporary GitHub Actions artifact, not as a published release.
+Use the Releases page to download the installer directly. You do not need to download a source ZIP or use the Actions artifacts.
 
-## Download
+1. Open the [AzaleaHouse Releases page](https://github.com/azaleaforge-ctrl/AzaleaHouse/releases).
+2. Open the newest release, for example **AzaleaHouse v0.1.4**.
+3. Under **Assets**, download the Windows x64 setup file ending in `-setup.exe`.
+4. Optionally download `SHA256SUMS.txt` and compare the listed checksum with the downloaded installer.
+5. Run the setup file. AzaleaHouse is configured to install for the current Windows user, so it should not normally require administrator permission.
 
-1. Open the repository's [Actions](https://github.com/azaleaforge-ctrl/AzaleaHouse/actions) tab.
-2. Select **Windows Installer Artifact**.
-3. Open the latest successful run for the `main` branch.
-4. In the run's **Artifacts** section, download `AzaleaHouse-Installer-v0.1.4-Windows-x64` (the version in the name follows the source configuration).
-5. Extract the downloaded ZIP. It contains the Windows setup `.exe` and `SHA256SUMS.txt`.
-6. Run the setup executable. The installer uses the current-user install mode configured by the project.
+## When will a release appear?
 
-If no successful run is available yet, merge the workflow that adds this build process, then open Actions again after the main-branch run completes. You can also use **Run workflow** on the Windows Installer Artifact workflow to build the current `main` branch manually.
+After the release workflow is merged into `main), it builds the Windows app, runs the Rust tests, verifies the installer filename and size, and publishes a GitHub Release if the current app version does not already have one. The tag is created by the release action from that main-branch commit, so a manual tag step is not needed for the initial release or subsequent version bumps.
 
-## Important security and retention notes
+For a later release, update all synchronized app version metadata and merge that version bump into `main`. The workflow intentionally does not overwrite an existing release with the same version.
 
-- This is an **unsigned development installer**, not a production release. Windows SmartScreen or antivirus software may show a warning. Only install it if you trust the repository and have verified the source/build.
-- To check the downloaded file, compare its SHA-256 with the matching entry in `SHA256SUMS.txt`. The checksum verifies file integrity against that manifest; it does not prove who signed or authored the installer.
-- The artifact is retained for 14 days, after which it expires and must be rebuilt.
-- The artifact is not shown on the Releases page, does not create a version tag, and does not enable automatic updates or installer execution by AzaleaHouse.
-- Ollama and the required local model still need to be available separately for local AI chat to work.
+## Important
+
+- The installer is an **unsigned development build**. Windows SmartScreen or antivirus software may show a warning. Only run it if you trust the repository and the downloaded file.
+- The checksum verifies file integrity against the published checksum manifest; it does not prove that the installer was digitally signed by a verified publisher.
+- Ollama and the local model are not bundled. Install and configure Ollama separately before expecting local AI chat to work.
+- GitHub Releases are permanent release assets; the temporary Actions artifact is retained for 14 days and is only a fallback/testing output.
