@@ -170,6 +170,7 @@ export default function App() {
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceTimerRef = useRef<number | null>(null);
   const skipNextPersistenceRef = useRef(false);
+  const previousGenStateRef = useRef<GenState>("idle");
 
   const setActiveConversationId = useCallback((id: string | null) => {
     activeConversationRef.current = id;
@@ -501,7 +502,8 @@ export default function App() {
     return write;
   }, [refreshHistory, setActiveConversationId]);
 
-  // Debounced autosave. messagesRef is updated by the effect above before this effect runs.
+  // Periodic autosave: keep a single timer alive while stream chunks continue,
+  // rather than postponing persistence until a long response has fully stopped.
   useEffect(() => {
     if (!memoryInitialized || !memoryReadyRef.current || messages.length === 0) return;
 
@@ -510,21 +512,26 @@ export default function App() {
       return;
     }
 
-    if (persistenceTimerRef.current !== null) {
-      window.clearTimeout(persistenceTimerRef.current);
-    }
+    if (persistenceTimerRef.current !== null) return;
     persistenceTimerRef.current = window.setTimeout(() => {
       persistenceTimerRef.current = null;
       void persistConversation();
-    }, 450);
-
-    return () => {
-      if (persistenceTimerRef.current !== null) {
-        window.clearTimeout(persistenceTimerRef.current);
-        persistenceTimerRef.current = null;
-      }
-    };
+    }, 1200);
   }, [messages, memoryInitialized, persistConversation]);
+
+  // Flush promptly when a generation finishes or is cancelled, after messagesRef
+  // has received the final committed message state.
+  useEffect(() => {
+    const wasGenerating = previousGenStateRef.current === "generating";
+    previousGenStateRef.current = genState;
+    if (!wasGenerating || genState !== "idle" || !memoryInitialized || messages.length === 0) return;
+
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    }
+    void persistConversation();
+  }, [genState, memoryInitialized, messages.length, persistConversation]);
 
   /// Save settings whenever they change (debounced via useEffect).
   useEffect(() => {
