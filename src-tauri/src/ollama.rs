@@ -65,7 +65,22 @@ pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessageIn>,
     pub think: bool,
+    #[serde(rename = "runtimePolicy", default = "default_runtime_policy")]
+    pub runtime_policy: String,
     pub options: ChatOptions,
+}
+
+fn default_runtime_policy() -> String {
+    "auto".to_owned()
+}
+
+fn keep_alive_for_policy(runtime_policy: &str) -> serde_json::Value {
+    if runtime_policy == "manual" {
+        // Ollama API supports a negative number to keep the model loaded indefinitely.
+        serde_json::json!(-1)
+    } else {
+        serde_json::json!("1h")
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -382,6 +397,7 @@ pub async fn chat_cancel(state: State<'_, ActiveStreams>, id: String) -> Result<
 #[tauri::command]
 pub async fn load_model(
     model: String,
+    runtime_policy: String,
     lifecycle: State<'_, RuntimeOperationLock>,
     active_streams: State<'_, ActiveStreams>,
 ) -> Result<(), String> {
@@ -395,7 +411,7 @@ pub async fn load_model(
         "model": model,
         "prompt": "",
         "stream": false,
-        "keep_alive": "1h",
+        "keep_alive": keep_alive_for_policy(&runtime_policy),
     });
     let resp = http
         .post(format!("{OLLAMA_BASE}/api/generate"))
@@ -454,10 +470,12 @@ async fn chat_worker(
 ) {
     let http = stream_client();
     let req_opts = payload.options;
+    let keep_alive = keep_alive_for_policy(&payload.runtime_policy);
     let mut body_obj = serde_json::json!({
         "model": payload.model,
         "messages": payload.messages,
         "stream": true,
+        "keep_alive": keep_alive,
         "options": serde_json::json!({
             "num_ctx": req_opts.num_ctx,
             "num_predict": req_opts.num_predict,
@@ -724,7 +742,7 @@ mod streaming_tests {
 
 #[cfg(test)]
 mod runtime_lifecycle_tests {
-    use super::has_active_chat_streams;
+    use super::{has_active_chat_streams, keep_alive_for_policy};
 
     #[test]
     fn runtime_transition_is_allowed_when_no_chat_is_active() {
@@ -735,5 +753,15 @@ mod runtime_lifecycle_tests {
     fn runtime_transition_is_blocked_when_a_chat_is_active() {
         assert!(has_active_chat_streams(1));
         assert!(has_active_chat_streams(3));
+    }
+
+    #[test]
+    fn automatic_policy_keeps_model_loaded_for_one_hour() {
+        assert_eq!(keep_alive_for_policy("auto"), serde_json::json!("1h"));
+    }
+
+    #[test]
+    fn manual_policy_keeps_model_loaded_indefinitely() {
+        assert_eq!(keep_alive_for_policy("manual"), serde_json::json!(-1));
     }
 }

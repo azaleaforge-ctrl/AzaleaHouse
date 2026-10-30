@@ -161,13 +161,17 @@ export function SettingsScreen({
               />
             }
           />
-          {(runtimeStatus === "ready" || runtimeStatus === "unloaded") ? (
+          {(runtimeStatus === "ready" || runtimeStatus === "unloaded" || runtimeStatus === "loading" || runtimeStatus === "unloading") ? (
             <FieldRow
               label="Status model"
               desc={
                 runtimeStatus === "ready"
                   ? "Model dimuat di RAM dan siap digunakan."
-                  : "Model tidak berada di RAM; Ollama akan memuatnya saat diperlukan."
+                  : runtimeStatus === "loading"
+                    ? "Kebijakan runtime atau status model sedang diperbarui."
+                    : runtimeStatus === "unloading"
+                      ? "Model sedang dilepas dari RAM."
+                      : "Model tidak berada di RAM; Ollama akan memuatnya saat diperlukan."
               }
               control={
                 runtimeStatus === "ready" && onUnloadModel ? (
@@ -180,7 +184,9 @@ export function SettingsScreen({
                     {modelBusy ? "Sedang bekerja…" : "Matikan"}
                   </button>
                 ) : (
-                  <span className="field-value">Tidak dimuat</span>
+                  <span className="field-value">
+                    {runtimeStatus === "loading" ? "Memuat…" : runtimeStatus === "unloading" ? "Melepas…" : "Tidak dimuat"}
+                  </span>
                 )
               }
             />

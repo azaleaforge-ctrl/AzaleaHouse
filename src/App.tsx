@@ -40,6 +40,7 @@ import {
   invokeCancelDownload,
   listenUpdateProgress,
   invokeUnloadModel,
+  invokeLoadModel,
   listenChatEvents,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -170,6 +171,7 @@ export default function App() {
   // A loaded model at startup starts its idle window from now; zero would cause immediate unload.
   const lastActivityRef = useRef(Date.now());
   const runtimeOperationRef = useRef(false);
+  const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
   const memoryReadyRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -313,6 +315,7 @@ export default function App() {
   // ── Fetch runtime status on mount & model change ──
   useEffect(() => {
     let alive = true;
+    setRuntimeStatus("loading");
     invokeRuntimeStatus(settings.ai.model).then((status) => {
       if (!alive || !status) return;
       setRuntimeStatus(status as RuntimeStatus);
@@ -323,6 +326,37 @@ export default function App() {
       alive = false;
     };
   }, [settings.ai.model]);
+
+  // Apply persisted or changed runtime policy to a model already loaded in RAM.
+  // Chat starts and load/unload operations share a backend mutex, so this remains race-safe.
+  useEffect(() => {
+    if (runtimeStatus !== "ready" || genState !== "idle") return;
+    if (chatStartPendingRef.current || streamIdRef.current !== null || runtimeOperationRef.current) return;
+
+    const configKey = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+    if (lastAppliedRuntimeConfigRef.current === configKey) return;
+    lastAppliedRuntimeConfigRef.current = configKey;
+    runtimeOperationRef.current = true;
+    setRuntimeStatus("loading");
+
+    void (async () => {
+      try {
+        const loaded = await invokeLoadModel(settings.ai.model, settings.ai.runtimePolicy);
+        if (!loaded) {
+          setChatError("Kebijakan runtime belum berhasil diterapkan ke Ollama. Periksa status runtime lalu coba lagi.");
+        } else {
+          lastActivityRef.current = Date.now();
+        }
+        const refreshed = await invokeRuntimeStatus(settings.ai.model);
+        setRuntimeStatus((refreshed as RuntimeStatus | null) ?? (loaded ? "ready" : "error"));
+      } catch {
+        setChatError("Gagal menerapkan kebijakan runtime ke Ollama.");
+        setRuntimeStatus("error");
+      } finally {
+        runtimeOperationRef.current = false;
+      }
+    })();
+  }, [settings.ai.model, settings.ai.runtimePolicy, runtimeStatus, genState]);
 
   // ── Runtime lifecycle: automatically unload only after a full idle hour ──
   useEffect(() => {
@@ -674,6 +708,7 @@ export default function App() {
           images: message.images,
         })),
         think: settings.ai.thinking,
+        runtimePolicy: settings.ai.runtimePolicy,
         options: {
           temperature: settings.ai.temperature,
           num_ctx: settings.ai.contextWindow,
@@ -798,6 +833,7 @@ export default function App() {
         images: message.images,
       })),
       think: settings.ai.thinking,
+        runtimePolicy: settings.ai.runtimePolicy,
       options: {
         temperature: settings.ai.temperature,
         num_ctx: settings.ai.contextWindow,
