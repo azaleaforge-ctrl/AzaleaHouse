@@ -1,3 +1,4 @@
+mod document;
 mod fs;
 mod ollama;
 mod updater;
@@ -44,6 +45,9 @@ pub fn run() {
             // No arbitrary source filesystem path is exposed through IPC.
             fs::save_attachment_bytes,
             fs::load_attachment_base64,
+            // Phase 6: Local document engine
+            document::create_document_docx,
+            document::open_documents_folder,
             // Legacy arbitrary-path reader/encoder commands remain unregistered.
 
             // Phase 7: Version Center & Manual Updater
