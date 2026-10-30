@@ -658,9 +658,11 @@ async fn checked_local_file(path_str: &str, allowed_extensions: &[&str], max_byt
 }
 
 fn is_safe_attachment_name(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".."
-        && !name.contains('/') && !name.contains('\\')
-        && Path::new(name).file_name().and_then(|value| value.to_str()) == Some(name)
+    if name.is_empty() || name == "." || name == ".." || name.contains(':') || name.contains('\0') {
+        return false;
+    }
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_))) && components.next().is_none()
 }
 
 const SUPPORTED_ATTACHMENT_EXTENSIONS: &[&str] = &[
