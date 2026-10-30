@@ -172,6 +172,7 @@ export default function App() {
   const skipNextPersistenceRef = useRef(false);
   const previousGenStateRef = useRef<GenState>("idle");
   const suppressAutoSaveRef = useRef(false);
+  const suppressNextGenerationFlushRef = useRef(false);
 
   const setActiveConversationId = useCallback((id: string | null) => {
     activeConversationRef.current = id;
@@ -526,7 +527,9 @@ export default function App() {
   useEffect(() => {
     const wasGenerating = previousGenStateRef.current === "generating";
     previousGenStateRef.current = genState;
-    if (suppressAutoSaveRef.current || !wasGenerating || genState !== "idle" || !memoryInitialized || messages.length === 0) return;
+    const skipFlushForSessionSwitch = suppressNextGenerationFlushRef.current;
+    suppressNextGenerationFlushRef.current = false;
+    if (suppressAutoSaveRef.current || skipFlushForSessionSwitch || !wasGenerating || genState !== "idle" || !memoryInitialized || messages.length === 0) return;
 
     if (persistenceTimerRef.current !== null) {
       window.clearTimeout(persistenceTimerRef.current);
@@ -826,7 +829,10 @@ export default function App() {
     // Prevent a cancellation/finalization effect from writing to the session being left.
     suppressAutoSaveRef.current = true;
     try {
-      if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
+      if (streamIdRef.current || chatStartPendingRef.current) {
+        suppressNextGenerationFlushRef.current = true;
+        stopGeneration();
+      }
       if (persistenceTimerRef.current !== null) {
         window.clearTimeout(persistenceTimerRef.current);
         persistenceTimerRef.current = null;
@@ -867,7 +873,10 @@ export default function App() {
 
     try {
       if (deletingActive) {
-        if (streamIdRef.current || chatStartPendingRef.current) stopGeneration();
+        if (streamIdRef.current || chatStartPendingRef.current) {
+          suppressNextGenerationFlushRef.current = true;
+          stopGeneration();
+        }
         await persistConversation();
       }
 
