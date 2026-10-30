@@ -55,7 +55,8 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
 import { ComingSoon } from "./components/ComingSoon";
-import { IconFile, IconImage } from "./components/Icons";
+import { DocumentsView } from "./components/DocumentsView";
+import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
 
 function formatConversationTimestamp(value: string): string {
@@ -1340,12 +1341,7 @@ export default function App() {
 
         {view === "documents" ? (
           <div className="view-fade">
-            <ComingSoon
-              icon={<IconFile size={28} />}
-              title="Dokumen"
-              desc="Pembuatan dokumen DOCX/PDF dengan layout rapi akan hadir di sini."
-              phase="Fase 6"
-            />
+            <DocumentsView />
           </div>
         ) : null}
 

@@ -269,6 +269,31 @@ export async function invokeOpenMemoryFolder(): Promise<boolean> {
   }
 }
 
+export interface SavedDocumentFile {
+  fileName: string;
+  path: string;
+  size: number;
+}
+
+/** Render a Markdown draft into a validated DOCX inside .AzaleaMemory/documents. */
+export async function invokeCreateDocumentDocx(
+  title: string,
+  markdown: string,
+): Promise<SavedDocumentFile> {
+  if (!isTauri()) throw new Error("Pembuatan DOCX hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<SavedDocumentFile>("create_document_docx", {
+    draft: { title, markdown },
+  });
+}
+
+/** Open the local documents output folder in Explorer. */
+export async function invokeOpenDocumentsFolder(): Promise<void> {
+  if (!isTauri()) throw new Error("Folder dokumen hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("open_documents_folder");
+}
+
 /** Pilih folder induk secara native; null berarti pengguna membatalkan dialog. */
 export async function invokePickMemoryParentFolder(): Promise<string | null> {
   if (!isTauri()) throw new Error("Pemilihan folder hanya tersedia di aplikasi desktop.");

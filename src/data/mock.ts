@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.2";
+export const FALLBACK_VERSION = "0.1.3";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -101,11 +101,11 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV012: string[] = [
-  "Build pengembangan 0.1.2: pembaca TXT/Markdown/JSON/CSV/kode, PDF, DOCX, XLSX, dan gambar terpilih.",
-  "Lampiran disimpan secara lokal di .AzaleaMemory dan metadata-nya mengikuti sesi percakapan.",
-  "Ekstraksi PDF tidak memakai OCR; PDF hasil scan atau font/encoding tertentu mungkin tidak terbaca.",
-  "Versi 0.1.2 hanya metadata pengembangan: belum ada GitHub Release, tag, installer, atau update publik.",
+export const changelogV013: string[] = [
+  "Build pengembangan 0.1.3: studio dokumen lokal dengan pratinjau dan ekspor DOCX.",
+  "DOCX menggunakan struktur Office Open XML, style heading, tabel, daftar, margin A4, dan nomor halaman.",
+  "Ekspor PDF membuka dialog cetak Windows; pilih Microsoft Print to PDF untuk menyimpan PDF.",
+  "Versi 0.1.3 masih build pengembangan: belum ada tag, GitHub Release, atau installer publik.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {

@@ -37,7 +37,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 | 3 — Settings & runtime lifecycle | **Implemented; manual acceptance pending** | Thinking/settings and auto/manual keep-alive code exist; verify the one-hour idle and active-generation edge cases on Windows. |
 | 4 — Local storage & .AzaleaMemory | **Partial; hardening in progress** | Conversation/settings persistence exists. Custom-path migration and backup are under Repair Stage 1; restore, memory deletion controls, and full migration failure acceptance remain incomplete. |
 | 5 — File reader & vision | **Implemented in source; manual acceptance pending** | Stage 2 adds bounded text/code, PDF, DOCX and XLSX extraction; PNG/JPG/JPEG/WebP images; safe byte-only attachment persistence and session metadata. OCR and some PDF fonts/encodings remain limitations; validate with Windows/Ollama samples. |
-| 6 — Document engine | **Not implemented** | Documents view still displays a “coming soon” screen; DOCX/PDF generation and render validation are outstanding. |
+| 6 — Document engine | **Partial — first DOCX/export slice** | Documents view now previews a Markdown-backed draft and writes a genuine OOXML DOCX locally with styles, lists, tables, A4 margins, and page numbering. PDF uses Windows print-to-PDF through the native print dialog; direct PDF generation and render validation remain outstanding. |
 | 7 — Version Center & manual updater | **Partial / blocked** | GitHub metadata check and manual download code exist, but the official signed Tauri updater, signature verification, and Install & Restart are not configured. No GitHub Release is currently published. |
 | 8 — Quality & packaging | **CI infrastructure present; release acceptance pending** | Windows CI checks frontend build and Rust compile/tests. Installer installation/uninstallation, interactive desktop behavior, and end-to-end update tests still need direct acceptance. |
 
@@ -51,8 +51,8 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Development version and release freeze
 
-- The development branch synchronizes application/package metadata to **0.1.2** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
-- This version change is source/configuration metadata only. It does **not** create a `v0.1.2` tag, GitHub Release, installer upload, or production update.
+- The development branch synchronizes application/package metadata to **0.1.3** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- This version change is source/configuration metadata only. It does **not** create a `v0.1.3` tag, GitHub Release, installer upload, or production update.
 - Keep the release freeze in place until the planned repairs and Windows acceptance tests pass and the owner separately authorizes publication.
 
 ## Security and behavior boundaries
@@ -73,3 +73,12 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - Provisional limits: one attachment up to 5 MiB, at most five files per selection, extracted text up to 30,000 characters per file, selected prompt context up to 12,000 characters.
 - PDF extraction is best-effort for common text streams and FlateDecode. OCR, encrypted PDFs, complex font maps and guaranteed layout/table fidelity are not included. Spreadsheet extraction returns cell values rather than calculations or formatting.
 - Version 0.1.2 is development metadata only. Do not create a release, version tag, installer upload or production update without separate authorization.
+
+
+## Document Engine — first local authoring slice (PRD Phase 6)
+
+- The Documents page now has an editor and live A4-oriented preview; Markdown headings, paragraphs, lists, tables, inline bold/italic/code, and explicit PAGEBREAK blocks are supported in the preview.
+- DOCX is generated locally using a small, dependency-free Office Open XML + ZIP Store writer. The file is created inside .AzaleaMemory/documents/; its OOXML includes heading styles, list numbering, table styling, A4 page settings, and a page-number footer.
+- PDF export currently delegates to the Windows print dialog. The user selects Microsoft Print to PDF to create a PDF; AzaleaHouse does not claim that this is a separate, direct PDF renderer.
+- The document editor is a deterministic renderer/formatter, not yet the complete AI-to-document pipeline. The first slice accepts content written or prepared elsewhere and pasted as Markdown; generating content directly from an AI prompt, DOCX render validation, and direct PDF rendering remain future work.
+- Version metadata is synchronized to 0.1.3 on this branch only. No tag, GitHub Release, installer, or production update is created.
