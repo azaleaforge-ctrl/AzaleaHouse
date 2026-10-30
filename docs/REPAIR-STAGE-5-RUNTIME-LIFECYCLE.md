@@ -17,7 +17,8 @@ Prevent automatic or manual model unloading while a chat is starting or streamin
 - Avoid repeated unload attempts when Ollama still briefly reports the model as ready after a successful unload.
 - Add a Rust-managed lifecycle mutex shared by chat start, model load, and model unload. This prevents a new stream from starting in the middle of an unload and rejects load/unload while a stream is registered.
 - Add Rust unit tests for the lifecycle guard decision.
-- Keep the idle policy at one hour; manual policy does not run the automatic unload timer.
+- Configure Ollama's request-level keep-alive to match policy: automatic mode uses `1h`, while manual mode uses `-1` to keep the model loaded indefinitely. The policy is included in every chat request and is reapplied to an already-loaded model when the setting changes.
+- Keep the app's automatic idle policy at one hour; manual policy does not run the app's automatic unload timer.
 
 ## Validation
 
