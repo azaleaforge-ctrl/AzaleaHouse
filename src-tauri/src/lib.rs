@@ -1,5 +1,6 @@
 mod document;
 mod fs;
+mod hardware;
 mod ollama;
 mod updater;
 
@@ -22,6 +23,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             // Phase 2: Ollama runtime bridge
+            hardware::scan_hardware,
             ollama::runtime_status,
             ollama::list_models,
             ollama::pull_model,

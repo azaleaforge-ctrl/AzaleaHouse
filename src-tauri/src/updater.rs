@@ -292,7 +292,7 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
 
 /// Download is manual and constrained to the official release. The output is not executable
 /// through this app until the official signed-updater flow is configured.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn download_update(
     app: AppHandle,
     asset_url: String,

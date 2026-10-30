@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.6";
+export const FALLBACK_VERSION = "0.1.7";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -101,11 +101,11 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV016: string[] = [
-  "Build pengembangan 0.1.6: memperbaiki pemanggilan command unduhan pembaruan pada Tauri v2.",
-  "Argumen installer sekarang dikirim dengan nama camelCase yang sesuai, sehingga unduhan tidak gagal karena assetUrl hilang.",
-  "Fitur AI Lokal dan daftar model Ollama tetap tersedia dari versi sebelumnya.",
-  "Versi 0.1.6 memperbaiki jalur unduhan updater; build rilis dibuat oleh workflow Windows setelah PR masuk ke main.",
+export const changelogV017: string[] = [
+  "Build pengembangan 0.1.7: pemindai CPU, RAM, GPU/VRAM, dan ruang disk untuk rekomendasi model Ollama.",
+  "Model diberi label hijau untuk rekomendasi, kuning untuk kemungkinan berjalan lebih lambat, dan merah bila anggaran memori/disk tidak memadai.",
+  "Rekomendasi utama ditampilkan paling atas; model yang tidak memenuhi batas minimum tidak ditawarkan untuk diunduh dari katalog.",
+  "Jalur updater memakai nama argumen camelCase secara eksplisit di frontend dan command Tauri agar unduhan rilis berikutnya dapat diuji ulang.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {

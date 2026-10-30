@@ -51,7 +51,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Windows installer distribution and release behavior
 
-- The current app version is synchronized to **0.1.6** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- The current app version is synchronized to **0.1.7** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
 - The Windows release workflow runs on `main`, builds a Windows x64 NSIS installer, runs Rust tests, validates that the installer filename matches the app version, and publishes the `.exe` plus `SHA256SUMS.txt` to GitHub Releases when that version does not already have a release.
 - The first release is intentionally an **unsigned development build**. Windows SmartScreen may warn; the workflow does not claim the checksum is a digital signature and does not configure automatic installer execution.
 - Future releases require synchronized version metadata to be bumped before the corresponding changes are merged to `main`. The workflow does not overwrite an existing release with the same version.
@@ -113,3 +113,14 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - Fixed the manual updater invocation to send the camelCase keys assetUrl and assetName to Tauri v2's command bridge. The Rust command parameters remain asset_url and asset_name; Tauri's default command argument mapping is camelCase on the JavaScript side.
 - The reported error "invalid args assetUrl ... missing required key assetUrl" happened because the frontend sent snake_case keys. The command bridge expects the camelCase keys for these arguments.
 - All synchronized version metadata is bumped to 0.1.6 so the next successful Windows release workflow produces a new installable version with the fix. No release is created from this repair branch.
+
+
+## Hardware-aware Ollama Model Advisor — v0.1.7 development increment
+
+- Added a local Windows hardware scan for CPU name/core counts, total/available RAM, video adapters and reported VRAM (when the data source can provide it), operating-system name, and free space on the system drive.
+- The scan uses a fixed read-only Windows CIM/PowerShell query with no user-provided shell input. The result stays on the device and is never uploaded by this feature.
+- Added a curated catalog of common Ollama model tags, with rough size/RAM/disk estimates and purpose categories. The advisor sorts models into green (recommended), yellow (likely to run slower), and red (hardware/disk budget below minimum estimate); the strongest compatible candidate is shown in a separate top recommendation card.
+- The advisor estimates compatibility; it cannot guarantee tokens-per-second or exact memory usage because model quantization, context size, runtime version, and GPU support change real requirements. If Windows does not report GPU VRAM accurately, the UI says so rather than inventing the value.
+- Red/unfit catalog downloads are disabled; a locally installed model may still be selected manually, because estimates should not destructively prevent user control.
+- The updater now declares Tauri's camelCase argument naming explicitly for `download_update`, matching the frontend's `assetUrl` and `assetName` payload. The installed v0.1.5 updater cannot fix itself while its own download command is broken; bootstrap to the fixed v0.1.6-or-newer installer must be done manually once.
+- Metadata on this branch is synchronized to 0.1.7. No tag or release is created from the PR branch; the main-branch Windows Release workflow publishes the installer after merge and successful build/tests.
