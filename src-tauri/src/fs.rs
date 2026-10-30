@@ -444,17 +444,23 @@ pub async fn set_custom_path(_app: tauri::AppHandle, new_path: String) -> Result
         }
     }
 
-    let mut source_manifest = BTreeMap::new();
-    collect_file_manifest(&old_canonical, &old_canonical, &mut source_manifest).await?;
-    let source_bytes = source_manifest.values().try_fold(0u64, |sum, size| sum.checked_add(*size))
+    let mut initial_manifest = BTreeMap::new();
+    collect_file_manifest(&old_canonical, &old_canonical, &mut initial_manifest).await?;
+    let source_bytes = initial_manifest.values().try_fold(0u64, |sum, size| sum.checked_add(*size))
         .ok_or_else(|| "Ukuran data memori terlalu besar untuk diverifikasi.".to_string())?;
-    let required_bytes = source_bytes.saturating_add(100 * 1024 * 1024);
-    if available_space_bytes(&selected_parent).is_some_and(|available| available < required_bytes) {
-        return Err(format!("Ruang kosong tidak cukup. Diperlukan sekitar {} MB termasuk cadangan.", (required_bytes + 1024 * 1024 - 1) / (1024 * 1024)));
+    // Target volume may need both the original tree and its safety backup.
+    let required_bytes = source_bytes.saturating_mul(2).saturating_add(100 * 1024 * 1024);
+    let available = available_space_bytes(&selected_parent)
+        .ok_or_else(|| "Ruang kosong pada volume tujuan tidak dapat diverifikasi.".to_string())?;
+    if available < required_bytes {
+        return Err(format!("Ruang kosong tidak cukup. Diperlukan sekitar {} MB termasuk cadangan.", required_bytes.saturating_add(1024 * 1024 - 1) / (1024 * 1024)));
     }
 
-    // The backup is a directory copy, not a ZIP archive.
+    // Backup is created before the migration and remains in the source tree.
     make_backup(&old_canonical).await?;
+    let mut source_manifest = BTreeMap::new();
+    collect_file_manifest(&old_canonical, &old_canonical, &mut source_manifest).await?;
+
     fs::create_dir_all(&new_abs).await
         .map_err(|e| format!("Gagal membuat folder tujuan: {e}"))?;
     if let Err(error) = copy_dir_recursive(&old_canonical, &new_abs).await {
@@ -473,12 +479,17 @@ pub async fn set_custom_path(_app: tauri::AppHandle, new_path: String) -> Result
     }
 
     let marker_dir = default_memory_path().join("metadata");
-    fs::create_dir_all(&marker_dir).await
-        .map_err(|e| format!("Gagal menyiapkan metadata lokasi memori: {e}"))?;
+    if let Err(error) = fs::create_dir_all(&marker_dir).await {
+        let _ = fs::remove_dir_all(&new_abs).await;
+        return Err(format!("Gagal menyiapkan metadata lokasi memori: {error}"));
+    }
     let marker = marker_dir.join("custom_path");
     let temporary_marker = marker_dir.join("custom_path.tmp");
-    fs::write(&temporary_marker, new_abs.to_string_lossy().as_bytes()).await
-        .map_err(|e| format!("Gagal menulis metadata lokasi memori: {e}"))?;
+    if let Err(error) = fs::write(&temporary_marker, new_abs.to_string_lossy().as_bytes()).await {
+        let _ = fs::remove_file(&temporary_marker).await;
+        let _ = fs::remove_dir_all(&new_abs).await;
+        return Err(format!("Gagal menulis metadata lokasi memori: {error}"));
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -493,12 +504,14 @@ pub async fn set_custom_path(_app: tauri::AppHandle, new_path: String) -> Result
         if success == 0 {
             let error = std::io::Error::last_os_error();
             let _ = fs::remove_file(&temporary_marker).await;
+            let _ = fs::remove_dir_all(&new_abs).await;
             return Err(format!("Lokasi memori lama tetap aktif karena metadata tidak dapat diperbarui: {error}"));
         }
     }
     #[cfg(not(target_os = "windows"))]
     if let Err(error) = fs::rename(&temporary_marker, &marker).await {
         let _ = fs::remove_file(&temporary_marker).await;
+        let _ = fs::remove_dir_all(&new_abs).await;
         return Err(format!("Lokasi memori lama tetap aktif karena metadata tidak dapat diperbarui: {error}"));
     }
     Ok(())
@@ -509,6 +522,28 @@ pub async fn set_custom_path(_app: tauri::AppHandle, new_path: String) -> Result
 pub async fn backup_memory(_app: tauri::AppHandle) -> Result<String, String> {
     let base = resolve_memory_path().await;
     make_backup(&base).await
+}
+
+/// Copy a memory tree for backup, excluding its top-level backups directory to avoid recursion.
+async fn copy_memory_for_backup(src: &Path, dst: &Path, is_root: bool) -> std::io::Result<()> {
+    fs::create_dir_all(dst).await?;
+    let mut entries = fs::read_dir(src).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let src_path = entry.path();
+        if is_root && entry.file_name().to_str() == Some("backups") {
+            continue;
+        }
+        let dst_path = dst.join(entry.file_name());
+        let kind = entry.file_type().await?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Symbolic link tidak diizinkan dalam backup: {}", src_path.display())));
+        } else if kind.is_dir() {
+            Box::pin(copy_memory_for_backup(&src_path, &dst_path, false)).await?;
+        } else if kind.is_file() {
+            fs::copy(&src_path, &dst_path).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Copy direktori tanpa mengikuti symbolic link.
@@ -542,13 +577,12 @@ async fn make_backup(base: &Path) -> Result<String, String> {
             use std::time::{SystemTime, UNIX_EPOCH};
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
+                .map(|d| d.as_millis())
                 .unwrap_or(0)
         }
     );
 
-    let backup_dir = base.parent().unwrap_or(Path::new("."));
-    let backup_dir = backup_dir.join("backups");
+    let backup_dir = base.join("backups");
     fs::create_dir_all(&backup_dir)
         .await
         .map_err(|e| format!("Gagal buat folder backup: {e}"))?;
@@ -560,9 +594,10 @@ async fn make_backup(base: &Path) -> Result<String, String> {
         return Err("Backup sudah ada".to_string());
     }
 
-    copy_dir_recursive(base, &backup_path)
-        .await
-        .map_err(|e| format!("Gagal copy ke backup: {e}"))?;
+    if let Err(error) = copy_memory_for_backup(base, &backup_path, true).await {
+        let _ = fs::remove_dir_all(&backup_path).await;
+        return Err(format!("Gagal membuat backup: {error}"));
+    }
 
     Ok(backup_path.to_string_lossy().to_string())
 }
