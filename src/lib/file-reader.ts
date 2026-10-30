@@ -27,6 +27,9 @@ const MAX_EXTRACTED_CHARS = 30000;
 const MAX_ARCHIVE_ENTRIES = 3000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 30 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES = 12 * 1024 * 1024;
+const MAX_PDF_STREAM_COUNT = 80;
+const MAX_PDF_SINGLE_STREAM_DECODE = 2 * 1024 * 1024;
+const MAX_PDF_TOTAL_DECODE_BUDGET = 16 * 1024 * 1024;
 
 const TEXT_EXTENSIONS = new Set([
   "txt", "md", "markdown", "json", "csv", "tsv", "ts", "tsx", "js", "jsx",
@@ -567,7 +570,12 @@ async function extractPdf(bytes: Uint8Array): Promise<string> {
   const pieces: string[] = [];
   let match: RegExpExecArray | null;
   let streamCount = 0;
-  while ((match = streamPattern.exec(raw)) !== null && streamCount < 240) {
+  let remainingDecodeBudget = MAX_PDF_TOTAL_DECODE_BUDGET;
+  while (
+    (match = streamPattern.exec(raw)) !== null &&
+    streamCount < MAX_PDF_STREAM_COUNT &&
+    remainingDecodeBudget > 0
+  ) {
     streamCount += 1;
     const start = match.index + match[0].length;
     const end = raw.indexOf("endstream", start);
@@ -589,14 +597,19 @@ async function extractPdf(bytes: Uint8Array): Promise<string> {
     const streamBytes = new Uint8Array(source.length);
     for (let i = 0; i < source.length; i += 1) streamBytes[i] = source.charCodeAt(i) & 0xff;
     try {
-      const decoded = filterIsFlate
-        ? await decompressBytes(streamBytes, "deflate", 8 * 1024 * 1024)
-        : streamBytes;
+      let decoded = streamBytes;
+      if (filterIsFlate) {
+        const allowance = Math.min(MAX_PDF_SINGLE_STREAM_DECODE, remainingDecodeBudget);
+        // Spend budget before decompression, including on malformed streams.
+        remainingDecodeBudget -= allowance;
+        decoded = await decompressBytes(streamBytes, "deflate", allowance);
+      }
       const content = latin1FromBytes(decoded);
       const extracted = extractPdfOperators(content);
       if (extracted) pieces.push(extracted);
-    } catch {
-      // A malformed, image, or unsupported stream is skipped; other text streams may work.
+    } catch (error) {
+      // A size-cap breach ends parsing; malformed or unsupported streams can be skipped.
+      if (error instanceof Error && error.message.includes("batas keamanan")) break;
     }
     streamPattern.lastIndex = end + "endstream".length;
     if (pieces.join("\n").length >= MAX_EXTRACTED_CHARS) break;
