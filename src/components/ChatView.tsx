@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { Attachment, GenState, Message, ProfileId, RuntimeStatus } from "../types";
+import type { ModelMeta } from "../lib/tauri";
 import { suggestions } from "../data/mock";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -20,6 +21,10 @@ export function ChatView({
   genState,
   animAllowed,
   modelName,
+  modelId,
+  availableModels,
+  onModelChange,
+  onOpenLocalAi,
   panelOpen,
   onTogglePanel,
   onNewChat,
@@ -43,6 +48,10 @@ export function ChatView({
   genState: GenState;
   animAllowed: boolean;
   modelName: string;
+  modelId: string;
+  availableModels: ModelMeta[];
+  onModelChange: (modelId: string) => void;
+  onOpenLocalAi: () => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
   onNewChat: () => void;
@@ -94,20 +103,42 @@ export function ChatView({
     <>
       <header className="chat-header">
         <h1 className="chat-title">{title}</h1>
-        <span className="chip chip--model" title="Status model AI lokal">
+        <div className="chat-model-picker chip" title="Pilih model AI lokal">
           <span
             className={
               runtimeStatus === "ready"
                 ? "status-dot status-dot--ready"
-                : runtimeStatus === "error" || runtimeStatus === "runtime_unavailable"
+                : runtimeStatus === "error" || runtimeStatus === "runtime_unavailable" || runtimeStatus === "not_installed"
                   ? "status-dot status-dot--error"
                   : "status-dot status-dot--loading"
             }
             aria-hidden="true"
           />
-          {modelName}
+          <select
+            className="chat-model-select"
+            aria-label="Model AI yang digunakan"
+            value={modelId}
+            disabled={genState !== "idle" || runtimeStatus === "loading" || runtimeStatus === "unloading"}
+            onChange={(event) => onModelChange(event.target.value)}
+          >
+            {!availableModels.some((model) => model.id === modelId) ? (
+              <option value={modelId}>{modelName} · belum terpasang</option>
+            ) : null}
+            {availableModels.map((model) => (
+              <option key={model.id} value={model.id}>{model.name}</option>
+            ))}
+          </select>
           <span className="chip-note">{runtimeChipLabel}</span>
-        </span>
+        </div>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={onOpenLocalAi}
+          aria-label="Buka pengelola AI lokal"
+          title="Kelola model Ollama"
+        >
+          <IconSparkles size={18} />
+        </button>
         <div className="header-spacer" />
         <button
           type="button"
@@ -129,6 +160,13 @@ export function ChatView({
           <IconPlus size={18} />
         </button>
       </header>
+
+      {runtimeStatus === "loading" ? (
+        <div className="model-load-status" role="status" aria-live="polite">
+          <div className="model-load-progress"><span /></div>
+          <span>Memuat atau memeriksa {modelName}… Ollama tidak menyediakan persentase untuk proses memuat model ke RAM.</span>
+        </div>
+      ) : null}
 
       {messages.length === 0 ? (
         <div className="empty-state">

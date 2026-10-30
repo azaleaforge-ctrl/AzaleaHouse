@@ -51,7 +51,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Windows installer distribution and release behavior
 
-- The current app version is synchronized to **0.1.4** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- The current app version is synchronized to **0.1.5** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
 - The Windows release workflow runs on `main`, builds a Windows x64 NSIS installer, runs Rust tests, validates that the installer filename matches the app version, and publishes the `.exe` plus `SHA256SUMS.txt` to GitHub Releases when that version does not already have a release.
 - The first release is intentionally an **unsigned development build**. Windows SmartScreen may warn; the workflow does not claim the checksum is a digital signature and does not configure automatic installer execution.
 - Future releases require synchronized version metadata to be bumped before the corresponding changes are merged to `main`. The workflow does not overwrite an existing release with the same version.
@@ -95,3 +95,14 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - Frontend update operations retain backend error text rather than silently converting all failures to generic null results. Download progress is reset for each attempt and the Version Center no longer shows a static Live label.
 - The app still never runs the downloaded installer. Official Tauri updater integration and cryptographic signature verification remain blocked until the owner generates and securely stores the private signing key, configures the public verification key, and publishes signed release artifacts.
 - Version metadata is synchronized to 0.1.4 on this branch only. No tag, GitHub Release, installer upload, or production update is created.
+
+
+## Local Ollama Model Manager — development increment 0.1.5
+
+- Chat inference already uses the local Ollama `/api/chat` endpoint; model files themselves are not included in the AzaleaHouse installer. The previous model chooser was static UI metadata and did not reflect all models installed in the user's Ollama store.
+- The AI Lokal view obtains the installed model list from Ollama `/api/tags`; refreshing the view makes models installed independently through Ollama visible to AzaleaHouse.
+- A user can explicitly enter an Ollama model reference and start a pull via the local runtime `/api/pull`; progress fields come from Ollama events. When Ollama reports `completed` and `total`, the UI shows progress for the currently reported layer. It does not fabricate an overall download percentage where the runtime does not provide one.
+- The chat header and Default AI settings use the discovered local model list. A saved model preference is no longer silently overwritten just because it is not the old hardcoded default.
+- Loading a model into RAM is separate from downloading it. Ollama does not expose a reliable percentage for the full model-preload operation through the existing status API, so the chat displays an indeterminate status while loading rather than an invented percent-to-ready estimate.
+- The model manager is a local-runtime interface, not a skill/plugin execution system. Tools/skills are orchestration modules and are not assumed to directly increase token generation speed.
+- Version 0.1.5 on the repair branch is source/configuration metadata only until merged and a successful Windows Release workflow publishes the versioned installer.

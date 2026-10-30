@@ -1,4 +1,4 @@
-export type View = "chat" | "documents" | "images" | "history" | "settings";
+export type View = "chat" | "local-ai" | "documents" | "images" | "history" | "settings";
 
 /** Kosakata status runtime — PRD 9.1 */
 export type RuntimeStatus =
@@ -14,7 +14,7 @@ export type RuntimeStatus =
   | "error";
 
 export type ProfileId = "quick" | "balanced" | "deep";
-export type ModelId = "gemma4:e2b";
+export type ModelId = string;
 
 /** Metadata lampiran yang dapat dipulihkan bersama sesi chat. */
 export interface MessageAttachment {

@@ -1,11 +1,13 @@
 import type { AppSettings, ProfileId, RuntimeStatus } from "../types";
-import { MEMORY_PATH, contextOptions, models, outputOptions, profiles } from "../data/mock";
+import type { ModelMeta } from "../lib/tauri";
+import { MEMORY_PATH, contextOptions, outputOptions, profiles } from "../data/mock";
 import { decimalID } from "../lib/format";
 import { FieldRow, Segmented, Slider, Switch } from "./Controls";
 import { IconArrowLeft, IconFolder, IconLock, IconRefresh } from "./Icons";
 
 export function SettingsScreen({
   settings,
+  availableModels,
   onChange,
   onBack,
   runtimeStatus,
@@ -19,6 +21,7 @@ export function SettingsScreen({
   onBackupMemory,
 }: {
   settings: AppSettings;
+  availableModels: ModelMeta[];
   onChange: (patch: Partial<AppSettings>) => void;
   onBack: () => void;
   runtimeStatus?: RuntimeStatus;
@@ -32,7 +35,7 @@ export function SettingsScreen({
   onBackupMemory?: () => void;
 }) {
   const { appearance, ai } = settings;
-  const model = models.find((m) => m.id === ai.model) ?? models[0];
+  const model = availableModels.find((m) => m.id === ai.model);
 
   return (
     <div className="settings-screen">
@@ -131,17 +134,30 @@ export function SettingsScreen({
           </h2>
           <FieldRow
             label="Model"
-            desc={model?.name}
+            desc={model?.name ?? `${ai.model} belum terpasang. Buka menu AI Lokal untuk mengunduh model.`}
             stacked
             control={
               <select
                 className="select select--full"
                 value={ai.model}
-                onChange={(e) => onChange({ ai: { ...ai, model: e.target.value as typeof ai.model } })}
+                disabled={availableModels.length === 0}
+                onChange={(e) => {
+                  const selected = availableModels.find((item) => item.id === e.target.value);
+                  onChange({
+                    ai: {
+                      ...ai,
+                      model: e.target.value,
+                      thinking: selected?.thinking_supported ? ai.thinking : false,
+                    },
+                  });
+                }}
                 aria-label="Model"
               >
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
+                {!availableModels.some((item) => item.id === ai.model) ? (
+                  <option value={ai.model}>{ai.model} · belum terpasang</option>
+                ) : null}
+                {availableModels.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
               </select>
             }
@@ -154,7 +170,7 @@ export function SettingsScreen({
                 checked={ai.thinking}
                 onChange={(v) => onChange({ ai: { ...ai, thinking: v } })}
                 ariaLabel="Thinking default"
-                disabled={!model?.thinkingSupported}
+                disabled={!model?.thinking_supported}
               />
             }
           />
