@@ -16,15 +16,23 @@ export type RuntimeStatus =
 export type ProfileId = "quick" | "balanced" | "deep";
 export type ModelId = "gemma4:e2b";
 
-/** Lampiran file yang dipilih pengguna */
-export interface Attachment {
+/** Metadata lampiran yang dapat dipulihkan bersama sesi chat. */
+export interface MessageAttachment {
+  id?: string;
   name: string;
-  path: string;
   size: number;
-  format: "text" | "image" | "other";
-  content?: string;     // teks yang diekstrak (untuk text files)
-  base64?: string;      // base64 data (untuk images)
-  error?: string;       // error validasi
+  format: "text" | "image" | "document" | "other";
+  mimeType?: string;
+  content?: string;
+  error?: string;
+  storagePath?: string;
+}
+
+/** Lampiran aktif yang dipilih pengguna; base64 hanya runtime, bukan disimpan di transcript. */
+export interface Attachment extends MessageAttachment {
+  path: string;
+  base64?: string;
+  storageWarning?: string;
 }
 export type RuntimePolicy = "auto" | "manual";
 
@@ -50,8 +58,10 @@ export interface Message {
   time: string;
   /** Apakah pesan ini masih sedang distreaming */
   streaming?: boolean;
-  /** Gambar lampiran (base64) untuk pesan ini */
+  /** Gambar lampiran (base64) untuk vision; hanya disimpan selama runtime. */
   images?: string[];
+  /** Metadata/teks lampiran yang ikut tersimpan bersama percakapan. */
+  attachments?: MessageAttachment[];
 }
 
 /** Status generasi respons model lokal. */
