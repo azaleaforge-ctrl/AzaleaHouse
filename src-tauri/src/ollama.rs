@@ -686,6 +686,24 @@ pub async fn unload_model(
     }
 }
 
+/// Process one Ollama stream record and return true on the final done marker.
+async fn process_chat_stream_line(app: &tauri::AppHandle, id: &str, line: &str) -> bool {
+    let Some(object) = parse_ollama_stream_line(line) else { return false; };
+    if object.get("done").and_then(|value| value.as_bool()).unwrap_or(false) {
+        let _ = emit_done(app, id, &object).await;
+        return true;
+    }
+    let model = object.get("model").and_then(|value| value.as_str()).unwrap_or("").to_owned();
+    let message = object.get("message").and_then(|value| value.as_object());
+    let content = message.and_then(|value| value.get("content")).and_then(|value| value.as_str()).map(str::to_owned);
+    let thinking = message.and_then(|value| value.get("thinking")).and_then(|value| value.as_str()).map(str::to_owned);
+    if content.is_none() && thinking.is_none() && object.get("done").is_none() { return false; }
+    let _ = app.emit("azalea:chat_chunk", serde_json::json!({
+        "id": id, "model": model, "content": content, "thinking": thinking
+    }));
+    false
+}
+
 async fn chat_worker(
     app: tauri::AppHandle,
     id: String,
@@ -798,40 +816,9 @@ async fn chat_worker(
             Some(Ok(bytes)) => {
                 buffer.extend_from_slice(&bytes);
                 while let Some(line) = split_line(&mut buffer) {
-                    if let Some(object) = parse_sse_line(&line) {
-                        if object.get("done").and_then(|value| value.as_bool()).unwrap_or(false) {
-                            received_done_marker = true;
-                            let _ = emit_done(&app, &id, &object).await;
-                            break;
-                        }
-
-                        let model = object
-                            .get("model")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("")
-                            .to_owned();
-                        let message = object.get("message").and_then(|value| value.as_object());
-                        let content = message
-                            .and_then(|value| value.get("content"))
-                            .and_then(|value| value.as_str())
-                            .map(str::to_owned);
-                        let thinking = message
-                            .and_then(|value| value.get("thinking"))
-                            .and_then(|value| value.as_str())
-                            .map(str::to_owned);
-
-                        if content.is_none() && thinking.is_none() && object.get("done").is_none() {
-                            continue;
-                        }
-                        let _ = app.emit(
-                            "azalea:chat_chunk",
-                            serde_json::json!({
-                                "id": id,
-                                "model": model,
-                                "content": content,
-                                "thinking": thinking
-                            }),
-                        );
+                    if process_chat_stream_line(&app, &id, &line).await {
+                        received_done_marker = true;
+                        break;
                     }
                 }
                 if received_done_marker {
@@ -849,7 +836,15 @@ async fn chat_worker(
                 stream_error_emitted = true;
                 break;
             }
-            None => break,
+            None => {
+                if !buffer.iter().all(u8::is_ascii_whitespace) {
+                    let final_line = String::from_utf8_lossy(&buffer);
+                    if process_chat_stream_line(&app, &id, &final_line).await {
+                        received_done_marker = true;
+                    }
+                }
+                break;
+            }
         }
     }
 
@@ -909,13 +904,14 @@ fn extract_ollama_error(text: &str) -> Option<String> {
         })
 }
 
-/// Ambil `data:` JSON object dari satu baris SSE.
-fn parse_sse_line(line: &str) -> Option<serde_json::Value> {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with("data:") {
-        return None;
-    }
-    let payload = trimmed["data:".len()..].trim();
+/// Parse one line from Ollama's newline-delimited JSON chat stream.
+///
+/// Ollama's /api/chat endpoint emits one JSON object per line, not SSE frames.
+/// Accept an optional data: prefix as a compatibility measure, but do not
+/// require it: requiring that prefix silently dropped every normal Ollama chunk.
+fn parse_ollama_stream_line(line: &str) -> Option<serde_json::Value> {
+    let trimmed = line.trim();
+    let payload = trimmed.strip_prefix("data:").map(str::trim).unwrap_or(trimmed);
     if payload.is_empty() || payload == "[DONE]" {
         return None;
     }
@@ -933,37 +929,48 @@ fn split_line(buf: &mut Vec<u8>) -> Option<String> {
 
 #[cfg(test)]
 mod streaming_tests {
-    use super::{parse_sse_line, split_line};
+    use super::{parse_ollama_stream_line, split_line};
 
     #[test]
-    fn parser_ignores_non_data_and_empty_done_frames() {
-        assert!(parse_sse_line("event: message").is_none());
-        assert!(parse_sse_line("data:").is_none());
-        assert!(parse_sse_line("data: [DONE]").is_none());
+    fn parser_reads_plain_ollama_ndjson_chunk() {
+        let value = parse_ollama_stream_line(r#"{"model":"gemma4:E2B","message":{"role":"assistant","content":"Halo"},"done":false}"#).expect("valid NDJSON");
+        assert_eq!(value["model"].as_str(), Some("gemma4:E2B"));
+        assert_eq!(value["message"]["content"].as_str(), Some("Halo"));
+        assert_eq!(value["done"].as_bool(), Some(false));
     }
 
     #[test]
-    fn parser_reads_json_sse_data() {
-        let value = parse_sse_line(r#"data: {"done":true,"model":"qwen3:8b"}"#)
-            .expect("valid data frame");
-        assert_eq!(value.get("done").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(
-            value.get("model").and_then(|v| v.as_str()),
-            Some("qwen3:8b")
-        );
+    fn parser_detects_plain_ollama_done_marker() {
+        let value = parse_ollama_stream_line(r#"{"model":"gemma4:E2B","done":true,"prompt_eval_count":12,"eval_count":5}"#).expect("valid final record");
+        assert_eq!(value["done"].as_bool(), Some(true));
     }
 
     #[test]
-    fn line_splitter_keeps_partial_data_until_newline_arrives() {
-        let mut buffer = b"data: first\ndata: partial".to_vec();
-        assert_eq!(split_line(&mut buffer).as_deref(), Some("data: first"));
-        assert_eq!(buffer, b"data: partial");
-        buffer.extend_from_slice(b"\n");
-        assert_eq!(split_line(&mut buffer).as_deref(), Some("data: partial"));
-        assert!(buffer.is_empty());
+    fn parser_keeps_compatibility_with_data_prefixed_json() {
+        let value = parse_ollama_stream_line(r#"data: {"done":true,"model":"qwen3:8b"}"#).expect("valid prefixed JSON");
+        assert_eq!(value["done"].as_bool(), Some(true));
+        assert_eq!(value["model"].as_str(), Some("qwen3:8b"));
+    }
+
+    #[test]
+    fn parser_ignores_empty_non_json_and_done_sentinel_lines() {
+        assert!(parse_ollama_stream_line("").is_none());
+        assert!(parse_ollama_stream_line("event: message").is_none());
+        assert!(parse_ollama_stream_line("data:").is_none());
+        assert!(parse_ollama_stream_line("[DONE]").is_none());
+        assert!(parse_ollama_stream_line("data: [DONE]").is_none());
+    }
+
+    #[test]
+    fn line_splitter_keeps_partial_final_json_until_newline_arrives() {
+        let mut buffer = b"{\"done\":false}\n{\"done\":true}".to_vec();
+        assert_eq!(split_line(&mut buffer).as_deref(), Some(r#"{"done":false}"#));
+        assert_eq!(buffer, b"{\"done\":true}");
+        let final_line = String::from_utf8_lossy(&buffer);
+        let parsed = parse_ollama_stream_line(&final_line).expect("valid final JSON record");
+        assert_eq!(parsed["done"].as_bool(), Some(true));
     }
 }
-
 
 #[cfg(test)]
 mod runtime_lifecycle_tests {
