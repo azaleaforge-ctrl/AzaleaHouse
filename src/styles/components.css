@@ -371,6 +371,49 @@
   color: var(--color-error, #ff6b6b);
   font-style: italic;
 }
+.attachment-warning {
+  color: var(--color-text-faint);
+  font-size: 10px;
+  max-width: 180px;
+  white-space: normal;
+}
+.attachment-status {
+  color: var(--color-success, #83d6aa);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.message-attachment {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 260px;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  border-radius: var(--radius-md);
+  font-size: 11px;
+}
+.message-attachment-name {
+  color: var(--color-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-attachment-meta,
+.message-attachment-saved {
+  color: var(--color-text-faint);
+}
+.message-attachment-error {
+  color: var(--color-error, #ff6b6b);
+}
 .attachment-remove {
   position: absolute;
   top: 2px;
