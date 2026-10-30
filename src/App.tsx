@@ -151,6 +151,9 @@ export default function App() {
   // Refs for streaming state — dibaca oleh event listener tanpa closure issues
   const streamIdRef = useRef<string | null>(null);
   const streamingMsgIdRef = useRef<string | null>(null);
+  const chatStartPendingRef = useRef(false);
+  const cancelBeforeStartRef = useRef(false);
+  const cancelledStreamIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<Message[]>([]);
   const eventCleanupRef = useRef<(() => void) | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
@@ -280,10 +283,22 @@ export default function App() {
     let mounted = true;
     listenChatEvents({
       onStarted: (e) => {
-        // Set stream ID from event so chunks arriving before Promise resolution aren't dropped
+        // If stop/new-chat happened before chat_start resolved, cancel this late ID
+        // instead of reviving a stream the UI has already abandoned.
+        if (cancelBeforeStartRef.current || cancelledStreamIdsRef.current.has(e.id)) {
+          cancelledStreamIdsRef.current.add(e.id);
+          void invokeChatCancel(e.id);
+          return;
+        }
+        // Capture the ID from events so early chunks don't depend on invoke timing.
         streamIdRef.current = e.id;
       },
       onChunk: (e) => {
+        // A late stream may still deliver its final event after the user cancelled it.
+        if (cancelledStreamIdsRef.current.has(e.id)) {
+          if (e.done) cancelledStreamIdsRef.current.delete(e.id);
+          return;
+        }
         if (!mounted) return;
         if (e.id !== streamIdRef.current) return;
 
@@ -312,6 +327,10 @@ export default function App() {
         );
       },
       onError: (e) => {
+        if (cancelledStreamIdsRef.current.has(e.id)) {
+          cancelledStreamIdsRef.current.delete(e.id);
+          return;
+        }
         if (!mounted || e.id !== streamIdRef.current) return;
         const failedMessageId = streamingMsgIdRef.current;
         if (failedMessageId) {
@@ -423,6 +442,10 @@ export default function App() {
       const t = text.trim();
       if (t === "" && attached.length === 0) return false;
       if (genState !== "idle") return false;
+      if (chatStartPendingRef.current) {
+        setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
+        return false;
+      }
 
       if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
         const readinessMessage: Record<RuntimeStatus, string> = {
@@ -493,7 +516,21 @@ export default function App() {
         },
       };
 
+      chatStartPendingRef.current = true;
+      cancelBeforeStartRef.current = false;
       const id = await invokeChatStart(payload);
+      chatStartPendingRef.current = false;
+
+      if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
+        cancelBeforeStartRef.current = false;
+        if (id) {
+          cancelledStreamIdsRef.current.add(id);
+          void invokeChatCancel(id);
+        }
+        streamIdRef.current = null;
+        return false;
+      }
+
       if (!id) {
         // Backend belum menerima pesan: kembalikan chat ke keadaan sebelum kirim,
         // supaya input pengguna tetap tersedia untuk dicoba ulang.
@@ -502,6 +539,7 @@ export default function App() {
         );
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         streamIdRef.current = null;
+        cancelBeforeStartRef.current = false;
         setGenState("idle");
         setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
         void invokeRuntimeStatus(settings.ai.model).then((status) => {
@@ -521,7 +559,11 @@ export default function App() {
   const stopGeneration = useCallback(() => {
     const messageId = streamingMsgIdRef.current;
     const activeStreamId = streamIdRef.current;
-    if (activeStreamId) void invokeChatCancel(activeStreamId);
+    cancelBeforeStartRef.current = chatStartPendingRef.current;
+    if (activeStreamId) {
+      cancelledStreamIdsRef.current.add(activeStreamId);
+      void invokeChatCancel(activeStreamId);
+    }
 
     if (messageId) {
       setMessages((current) =>
@@ -548,7 +590,7 @@ export default function App() {
   const regenerate = useCallback(() => {
     const current = messagesRef.current;
     const last = current[current.length - 1];
-    if (!last || last.role !== "assistant" || genState === "generating") return;
+    if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
 
     if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
       setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
@@ -591,12 +633,25 @@ export default function App() {
       },
     };
 
+    chatStartPendingRef.current = true;
+    cancelBeforeStartRef.current = false;
     void invokeChatStart(payload).then((id) => {
+      chatStartPendingRef.current = false;
+      if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
+        cancelBeforeStartRef.current = false;
+        if (id) {
+          cancelledStreamIdsRef.current.add(id);
+          void invokeChatCancel(id);
+        }
+        streamIdRef.current = null;
+        return;
+      }
       if (id) {
         streamIdRef.current = id;
         lastActivityRef.current = Date.now();
         return;
       }
+      cancelBeforeStartRef.current = false;
       setMessages((messages) => messages.filter((message) => message.id !== msgId));
       if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
       streamIdRef.current = null;
@@ -608,8 +663,10 @@ export default function App() {
   // ── New chat ──
   const newChat = useCallback(() => {
     setChatError(null);
+    cancelBeforeStartRef.current = chatStartPendingRef.current;
     if (streamIdRef.current) {
-      invokeChatCancel(streamIdRef.current);
+      cancelledStreamIdsRef.current.add(streamIdRef.current);
+      void invokeChatCancel(streamIdRef.current);
     }
     // Save current conversation before clearing
     void persistConversation();
