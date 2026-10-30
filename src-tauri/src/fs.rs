@@ -26,6 +26,11 @@ use tokio::fs;
 /// Versi skema penyimpanan — dinaikkan bila format berubah.
 const SCHEMA_VERSION: u32 = 1;
 
+/// One-time canonical directory selection created by the native folder picker.
+/// The migration command consumes this grant before using the destination.
+#[derive(Default)]
+pub struct MemoryPathSelection(pub tokio::sync::Mutex<Option<PathBuf>>);
+
 /// Struktur folder standar di dalam `.AzaleaMemory`.
 const SUBDIRS: &[&str] = &["profile", "conversations", "memories", "indexes", "attachments", "backups", "cache", "metadata"];
 
@@ -311,7 +316,10 @@ pub async fn open_memory_folder(_app: tauri::AppHandle) -> Result<(), String> {
 
 /// Opens a fixed native Windows folder picker; no caller-supplied command is executed.
 #[tauri::command]
-pub async fn pick_memory_parent_folder() -> Result<Option<String>, String> {
+pub async fn pick_memory_parent_folder(
+    selection: tauri::State<'_, MemoryPathSelection>,
+) -> Result<Option<String>, String> {
+    *selection.0.lock().await = None;
     #[cfg(target_os = "windows")]
     {
         let output = tokio::task::spawn_blocking(|| {
@@ -336,7 +344,19 @@ pub async fn pick_memory_parent_folder() -> Result<Option<String>, String> {
             });
         }
         let selected = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Ok((!selected.is_empty()).then_some(selected))
+        if selected.is_empty() {
+            return Ok(None);
+        }
+        let canonical = fs::canonicalize(&selected).await
+            .map_err(|e| format!("Folder yang dipilih tidak dapat diakses: {e}"))?;
+        if !fs::metadata(&canonical).await
+            .map_err(|e| format!("Gagal memeriksa folder yang dipilih: {e}"))?
+            .is_dir()
+        {
+            return Err("Pilihan bukan folder yang valid.".to_string());
+        }
+        *selection.0.lock().await = Some(canonical.clone());
+        Ok(Some(canonical.to_string_lossy().to_string()))
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -406,13 +426,19 @@ async fn is_empty_directory(path: &Path) -> Result<bool, String> {
 /// Migrate to a chosen parent folder while preserving the fixed .AzaleaMemory root name.
 /// The source remains intact; the active path changes only after the copied tree validates.
 #[tauri::command]
-pub async fn set_custom_path(_app: tauri::AppHandle, new_path: String) -> Result<(), String> {
-    let selected_parent = PathBuf::from(new_path.trim());
-    if !selected_parent.is_absolute() {
-        return Err("Pilih folder absolut dari dialog Windows.".to_string());
-    }
-    let selected_parent = fs::canonicalize(&selected_parent).await
+pub async fn set_custom_path(
+    _app: tauri::AppHandle,
+    new_path: String,
+    selection: tauri::State<'_, MemoryPathSelection>,
+) -> Result<(), String> {
+    let granted_parent = selection.0.lock().await.take()
+        .ok_or_else(|| "Pilih folder tujuan melalui dialog Windows sebelum migrasi.".to_string())?;
+    let requested_parent = fs::canonicalize(PathBuf::from(new_path.trim())).await
         .map_err(|e| format!("Folder tujuan tidak dapat diakses: {e}"))?;
+    if requested_parent != granted_parent {
+        return Err("Tujuan migrasi tidak sama dengan folder yang dipilih lewat dialog.".to_string());
+    }
+    let selected_parent = granted_parent;
     if !fs::metadata(&selected_parent).await.map_err(|e| format!("Gagal memeriksa folder tujuan: {e}"))?.is_dir() {
         return Err("Lokasi tujuan harus berupa folder.".to_string());
     }
