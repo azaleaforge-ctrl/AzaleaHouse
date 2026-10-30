@@ -1096,12 +1096,12 @@
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   background: var(--glass-bg-strong);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-3);
   text-align: center;
 }
 .memory-operation-card p {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--color-text-dim);
   font-size: 13px;
   line-height: 1.5;
 }
