@@ -324,3 +324,45 @@ pub fn cancel_download(state: State<'_, DownloadToken>) -> Result<(), String> {
     state.0.store(true, Ordering::SeqCst);
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::{is_safe_installer_name, is_safe_release_tag, parse_official_installer_url};
+
+    const VALID_URL: &str = "https://github.com/azaleaforge-ctrl/AzaleaHouse/releases/download/v0.1.0/AzaleaHouse_0.1.0_x64-setup.exe";
+
+    #[test]
+    fn accepts_only_official_release_installer() {
+        assert!(parse_official_installer_url(VALID_URL).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_https_and_external_hosts() {
+        assert!(parse_official_installer_url(
+            "http://github.com/azaleaforge-ctrl/AzaleaHouse/releases/download/v0.1.0/AzaleaHouse_0.1.0_x64-setup.exe"
+        ).is_err());
+        assert!(parse_official_installer_url(
+            "https://github.com.evil.example/azaleaforge-ctrl/AzaleaHouse/releases/download/v0.1.0/AzaleaHouse_0.1.0_x64-setup.exe"
+        ).is_err());
+    }
+
+    #[test]
+    fn rejects_other_repositories_and_query_strings() {
+        assert!(parse_official_installer_url(
+            "https://github.com/other-owner/other-repo/releases/download/v0.1.0/AzaleaHouse_0.1.0_x64-setup.exe"
+        ).is_err());
+        assert!(parse_official_installer_url(
+            "https://github.com/azaleaforge-ctrl/AzaleaHouse/releases/download/v0.1.0/AzaleaHouse_0.1.0_x64-setup.exe?redirect=evil"
+        ).is_err());
+    }
+
+    #[test]
+    fn rejects_path_traversal_and_non_installer_assets() {
+        assert!(!is_safe_installer_name("../AzaleaHouse_0.1.0_x64-setup.exe"));
+        assert!(!is_safe_installer_name("AzaleaHouse_latest.json"));
+        assert!(!is_safe_installer_name("AzaleaHouse_.exe"));
+        assert!(is_safe_release_tag("v0.1.0"));
+        assert!(!is_safe_release_tag("../latest"));
+    }
+}
