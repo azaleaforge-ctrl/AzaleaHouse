@@ -68,6 +68,32 @@ export interface ModelMeta {
   note: string;
 }
 
+export interface LocalGpuInfo {
+  name: string;
+  vramBytes: number | null;
+  vramSource: string | null;
+}
+
+export interface LocalHardwareInfo {
+  cpuName: string;
+  cpuCores: number;
+  logicalProcessors: number;
+  ramTotalBytes: number;
+  ramAvailableBytes: number;
+  gpus: LocalGpuInfo[];
+  diskAvailableBytes: number;
+  osName: string;
+  scannedAtUnixMs: number;
+}
+
+/** Read local Windows hardware for on-device model recommendations. */
+export async function invokeScanHardware(): Promise<LocalHardwareInfo> {
+  if (!isTauri()) throw new Error("Pemindaian hardware hanya tersedia di aplikasi desktop Windows.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<LocalHardwareInfo>("scan_hardware");
+}
+
+
 /** Pemanggilan ke `list_models` di Rust. */
 export async function invokeListModels(): Promise<ModelMeta[]> {
   if (!isTauri()) throw new Error("Daftar model Ollama hanya tersedia di aplikasi desktop.");

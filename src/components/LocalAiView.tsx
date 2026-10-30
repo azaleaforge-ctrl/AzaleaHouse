@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { ModelMeta, ModelPullProgress } from "../lib/tauri";
+import type { LocalHardwareInfo, ModelMeta, ModelPullProgress } from "../lib/tauri";
 import type { RuntimeStatus } from "../types";
-import { IconArrowLeft, IconRefresh, IconSparkles } from "./Icons";
-import { invokePullModel, listenModelPullProgress } from "../lib/tauri";
+import { IconArrowLeft, IconRefresh, IconSparkles, IconMonitor } from "./Icons";
+import { invokePullModel, listenModelPullProgress, invokeScanHardware } from "../lib/tauri";
 import "./LocalAiView.css";
 
 function formatBytes(bytes: number): string {
@@ -30,6 +30,92 @@ function statusText(status: string): string {
   return labels[status] ?? status;
 }
 
+type ModelTask = "general" | "coding" | "vision" | "reasoning";
+type ModelFit = "recommended" | "slow" | "unsupported";
+
+interface CatalogModel {
+  id: string;
+  name: string;
+  task: ModelTask;
+  sizeGb: number;
+  minRamGb: number;
+  recommendedRamGb: number;
+  minDiskGb: number;
+  recommendedVramGb: number;
+  vision: boolean;
+  summary: string;
+}
+
+const MODEL_CATALOG: CatalogModel[] = [
+  { id: "qwen3:0.6b", name: "Qwen3 0.6B", task: "general", sizeGb: 0.6, minRamGb: 3, recommendedRamGb: 4, minDiskGb: 2, recommendedVramGb: 0, vision: false, summary: "Paling ringan untuk chat sederhana, instruksi singkat, dan perangkat terbatas." },
+  { id: "llama3.2:1b", name: "Llama 3.2 1B", task: "general", sizeGb: 1.3, minRamGb: 4, recommendedRamGb: 6, minDiskGb: 3, recommendedVramGb: 2, vision: false, summary: "Asisten teks ringan untuk pemakaian harian." },
+  { id: "gemma3:1b", name: "Gemma 3 1B", task: "vision", sizeGb: 0.8, minRamGb: 4, recommendedRamGb: 6, minDiskGb: 3, recommendedVramGb: 2, vision: true, summary: "Varian ringkas yang mendukung teks dan gambar." },
+  { id: "qwen3:1.7b", name: "Qwen3 1.7B", task: "reasoning", sizeGb: 1.4, minRamGb: 4, recommendedRamGb: 8, minDiskGb: 3, recommendedVramGb: 3, vision: false, summary: "Keseimbangan ukuran dan kemampuan mengikuti instruksi." },
+  { id: "llama3.2:3b", name: "Llama 3.2 3B", task: "general", sizeGb: 2.0, minRamGb: 6, recommendedRamGb: 8, minDiskGb: 4, recommendedVramGb: 4, vision: false, summary: "Chat umum dengan kemampuan lebih baik daripada varian 1B." },
+  { id: "qwen2.5-coder:3b", name: "Qwen2.5 Coder 3B", task: "coding", sizeGb: 1.9, minRamGb: 6, recommendedRamGb: 10, minDiskGb: 4, recommendedVramGb: 4, vision: false, summary: "Diarahkan untuk bantuan coding dan penjelasan kode." },
+  { id: "qwen3:4b", name: "Qwen3 4B", task: "reasoning", sizeGb: 2.6, minRamGb: 8, recommendedRamGb: 12, minDiskGb: 5, recommendedVramGb: 6, vision: false, summary: "Kualitas penalaran lebih kuat dengan kebutuhan memori menengah." },
+  { id: "gemma3:4b", name: "Gemma 3 4B", task: "vision", sizeGb: 3.3, minRamGb: 8, recommendedRamGb: 12, minDiskGb: 6, recommendedVramGb: 6, vision: true, summary: "Pilihan multimodal untuk memahami gambar dan teks." },
+  { id: "qwen2.5vl:3b", name: "Qwen2.5-VL 3B", task: "vision", sizeGb: 3.3, minRamGb: 8, recommendedRamGb: 12, minDiskGb: 6, recommendedVramGb: 6, vision: true, summary: "Model vision untuk dokumen bergambar, foto, dan tanya-jawab visual." },
+  { id: "qwen2.5-coder:7b", name: "Qwen2.5 Coder 7B", task: "coding", sizeGb: 4.7, minRamGb: 12, recommendedRamGb: 20, minDiskGb: 8, recommendedVramGb: 8, vision: false, summary: "Model coding lebih besar; butuh memori lebih longgar." },
+  { id: "qwen3:8b", name: "Qwen3 8B", task: "reasoning", sizeGb: 5.2, minRamGb: 12, recommendedRamGb: 20, minDiskGb: 9, recommendedVramGb: 8, vision: false, summary: "Model general-purpose lebih kuat untuk analisis dan tugas kompleks." },
+  { id: "gemma3:12b", name: "Gemma 3 12B", task: "vision", sizeGb: 8.1, minRamGb: 16, recommendedRamGb: 24, minDiskGb: 13, recommendedVramGb: 12, vision: true, summary: "Pilihan multimodal besar; hanya untuk PC dengan memori dan ruang disk cukup." },
+];
+
+const TASK_LABELS: Record<ModelTask, string> = {
+  general: "Chat umum",
+  coding: "Coding",
+  vision: "Memahami gambar",
+  reasoning: "Penalaran",
+};
+
+function bytesToGb(bytes: number): number {
+  return bytes / (1024 ** 3);
+}
+
+function formatGb(gigabytes: number): string {
+  return `${gigabytes.toLocaleString("id-ID", { maximumFractionDigits: 1 })} GB`;
+}
+
+function assessModel(model: CatalogModel, hardware: LocalHardwareInfo): ModelFit {
+  const totalRam = bytesToGb(hardware.ramTotalBytes);
+  const freeDisk = bytesToGb(hardware.diskAvailableBytes);
+  const gpuRamValues = hardware.gpus
+    .map((gpu) => gpu.vramBytes)
+    .filter((value): value is number => typeof value === "number" && value > 0);
+  const maxVram = gpuRamValues.length ? Math.max(...gpuRamValues.map(bytesToGb)) : 0;
+  const usableGpuRam = maxVram >= model.recommendedVramGb;
+  const memoryTooLow = totalRam < model.minRamGb;
+  const diskTooLow = freeDisk < model.minDiskGb;
+
+  if (memoryTooLow || diskTooLow) return "unsupported";
+
+  // Green is deliberately conservative: sufficient RAM plus either enough VRAM,
+  // or a very small model likely to remain usable on CPU-only systems.
+  const cpuFriendly = model.sizeGb <= 1.5 && hardware.cpuCores >= 4 && totalRam >= model.recommendedRamGb;
+  if (totalRam >= model.recommendedRamGb && (usableGpuRam || cpuFriendly)) return "recommended";
+
+  // Small general-purpose models can still be smooth on capable CPU-only systems.
+  if (totalRam >= model.recommendedRamGb + 4 && hardware.logicalProcessors >= 8 && model.sizeGb <= 2.6) {
+    return "recommended";
+  }
+  return "slow";
+}
+
+function fitLabel(fit: ModelFit): string {
+  if (fit === "recommended") return "REKOMENDASI · LANCAR";
+  if (fit === "slow") return "BISA, TAPI LAMBAT";
+  return "TIDAK COCOK UNTUK SPEK INI";
+}
+
+function fitRank(fit: ModelFit): number {
+  return fit === "recommended" ? 0 : fit === "slow" ? 1 : 2;
+}
+
+function modelTaskMatches(model: CatalogModel, task: ModelTask): boolean {
+  if (task === "general") return model.task === "general" || model.task === "reasoning";
+  return model.task === task;
+}
+
 export function LocalAiView({
   models,
   modelListError,
@@ -52,6 +138,10 @@ export function LocalAiView({
   const [pullProgress, setPullProgress] = useState<ModelPullProgress | null>(null);
   const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
   const pullTargetRef = useRef("");
+  const [hardware, setHardware] = useState<LocalHardwareInfo | null>(null);
+  const [scanningHardware, setScanningHardware] = useState(false);
+  const [hardwareError, setHardwareError] = useState<string | null>(null);
+  const [modelTask, setModelTask] = useState<ModelTask>("general");
 
   useEffect(() => {
     let alive = true;
@@ -90,8 +180,24 @@ export function LocalAiView({
     }
   }
 
-  async function pull() {
-    const name = modelTag.trim();
+  async function scanHardware() {
+    setScanningHardware(true);
+    setHardwareError(null);
+    try {
+      const info = await invokeScanHardware();
+      setHardware(info);
+      setNotice({ kind: "success", text: "Spesifikasi berhasil dibaca secara lokal dari Windows." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Spesifikasi PC tidak dapat diperiksa.";
+      setHardwareError(message);
+      setNotice({ kind: "error", text: message });
+    } finally {
+      setScanningHardware(false);
+    }
+  }
+
+  async function pull(requestedModel?: string) {
+    const name = (requestedModel ?? modelTag).trim();
     if (!name) {
       setNotice({ kind: "error", text: "Masukkan nama atau tag model Ollama terlebih dahulu." });
       return;
@@ -128,6 +234,16 @@ export function LocalAiView({
   const pullPercent = pullProgress?.percent;
   const statusIsDone = pullProgress?.status === "success";
   const runtimeIsAvailable = runtimeStatus !== "not_installed" && runtimeStatus !== "runtime_unavailable" && runtimeStatus !== "error";
+  const assessedModels = hardware
+    ? MODEL_CATALOG.map((model) => ({ ...model, fit: assessModel(model, hardware) }))
+        .sort((a, b) => fitRank(a.fit) - fitRank(b.fit)
+          || Number(modelTaskMatches(b, modelTask)) - Number(modelTaskMatches(a, modelTask))
+          || a.sizeGb - b.sizeGb)
+    : [];
+  const bestModel = assessedModels.find((model) => model.fit !== "unsupported") ?? assessedModels[0] ?? null;
+  const gpuDescription = hardware?.gpus.length
+    ? hardware.gpus.map((gpu) => `${gpu.name}${gpu.vramBytes ? ` · ${formatGb(bytesToGb(gpu.vramBytes))} VRAM` : " · VRAM tidak terbaca akurat"}`).join(" · ")
+    : "GPU terpisah tidak terdeteksi";
 
   return (
     <section className="local-ai-page" aria-label="Pengelolaan AI lokal Ollama">
@@ -156,12 +272,88 @@ export function LocalAiView({
         <a href="https://ollama.com/download/windows" target="_blank" rel="noreferrer">Unduh Ollama</a>
       </div>
 
+      {hardwareError ? <div className="local-ai-notice is-error" role="alert">{hardwareError}</div> : null}
       {notice ? (
         <div className={"local-ai-notice is-" + notice.kind} role={notice.kind === "error" ? "alert" : "status"} aria-live="polite">
           {notice.text}
         </div>
       ) : null}
       {modelListError ? <div className="local-ai-notice is-error" role="alert">{modelListError}</div> : null}
+
+      <section className="local-ai-panel local-ai-hardware-panel" aria-label="Pemindaian spesifikasi dan rekomendasi model">
+        <div className="local-ai-panel-heading">
+          <div>
+            <h2><IconMonitor size={16} /> Periksa Spesifikasi PC</h2>
+            <p>Data dibaca dari Windows secara lokal. Rekomendasi adalah estimasi konservatif, bukan jaminan kecepatan.</p>
+          </div>
+          <button type="button" className="btn btn--primary" onClick={() => void scanHardware()} disabled={scanningHardware || pulling}>
+            {scanningHardware ? "Memeriksa…" : hardware ? "Periksa Ulang" : "Periksa Spesifikasi"}
+          </button>
+        </div>
+
+        {!hardware && !scanningHardware ? (
+          <div className="local-ai-hardware-empty">
+            Periksa perangkat terlebih dahulu untuk menghitung rekomendasi model. Tidak ada spesifikasi yang dikirim ke server.
+          </div>
+        ) : null}
+        {scanningHardware ? (
+          <div className="local-ai-hardware-loading" role="status">
+            <span className="local-ai-hardware-spinner" />
+            Membaca CPU, RAM, GPU/VRAM, dan ruang disk…
+          </div>
+        ) : null}
+        {hardware ? (
+          <>
+            <div className="local-ai-spec-grid">
+              <div className="local-ai-spec-card">
+                <span>PROSESOR</span>
+                <strong>{hardware.cpuName}</strong>
+                <small>{hardware.cpuCores} core · {hardware.logicalProcessors} logical processor</small>
+              </div>
+              <div className="local-ai-spec-card">
+                <span>RAM</span>
+                <strong>{formatGb(bytesToGb(hardware.ramTotalBytes))}</strong>
+                <small>{formatGb(bytesToGb(hardware.ramAvailableBytes))} tersedia saat dipindai</small>
+              </div>
+              <div className="local-ai-spec-card">
+                <span>GPU / VRAM</span>
+                <strong>{hardware.gpus.length ? hardware.gpus[0].name : "Tidak terdeteksi"}</strong>
+                <small>{gpuDescription}</small>
+              </div>
+              <div className="local-ai-spec-card">
+                <span>RUANG DISK C:</span>
+                <strong>{formatGb(bytesToGb(hardware.diskAvailableBytes))}</strong>
+                <small>{hardware.osName}</small>
+              </div>
+            </div>
+            <p className="local-ai-hardware-footnote">
+              VRAM dari Windows bisa tidak lengkap untuk beberapa GPU. Jika VRAM tidak tersedia, penilaian memakai RAM, CPU, dan ruang disk. Angka kebutuhan model bergantung pada tag/kuantisasi dan konteks chat.
+            </p>
+            {bestModel ? (
+              <section className={"local-ai-best-model fit-" + bestModel.fit} aria-label="Model paling direkomendasikan">
+                <div className="local-ai-best-copy">
+                  <span className="local-ai-best-eyebrow">PALING DIREKOMENDASIKAN UNTUK SPEK INI</span>
+                  <h3>{bestModel.name} <span className={"local-ai-fit-label fit-" + bestModel.fit}>{fitLabel(bestModel.fit)}</span></h3>
+                  <p>{bestModel.summary}</p>
+                  <div className="local-ai-best-meta">
+                    <span>Unduhan ± {formatGb(bestModel.sizeGb)}</span>
+                    <span>RAM minimal estimasi {bestModel.minRamGb} GB</span>
+                    <span>RAM nyaman estimasi {bestModel.recommendedRamGb} GB</span>
+                    <span>{TASK_LABELS[bestModel.task]}</span>
+                  </div>
+                </div>
+                {models.some((model) => model.id.toLowerCase() === bestModel.id.toLowerCase()) ? (
+                  <button type="button" className="btn btn--primary" onClick={() => onUseModel(bestModel.id)}>Gunakan di Chat</button>
+                ) : (
+                  <button type="button" className="btn btn--primary" onClick={() => void pull(bestModel.id)} disabled={pulling || scanningHardware}>
+                    {pulling ? "Mengunduh…" : "Download rekomendasi"}
+                  </button>
+                )}
+              </section>
+            ) : null}
+          </>
+        ) : null}
+      </section>
 
       <div className="local-ai-columns">
         <section className="local-ai-panel">
@@ -199,6 +391,71 @@ export function LocalAiView({
                     <button type="button" className={active ? "btn btn--sm btn--primary" : "btn btn--sm"} onClick={() => onUseModel(model.id)}>
                       {active ? "Sedang dipilih" : "Gunakan di Chat"}
                     </button>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="local-ai-panel local-ai-catalog-panel">
+          <div className="local-ai-panel-heading">
+            <div>
+              <h2>Katalog & rekomendasi model</h2>
+              <p>Urutan prioritas: hijau direkomendasikan, kuning bisa berjalan lebih lambat, merah tidak cukup sumber daya untuk penggunaan stabil.</p>
+            </div>
+          </div>
+          <div className="local-ai-task-filter" role="group" aria-label="Tujuan penggunaan model">
+            {([
+              ["general", "Chat umum"],
+              ["coding", "Coding"],
+              ["vision", "Memahami gambar"],
+              ["reasoning", "Penalaran"],
+            ] as Array<[ModelTask, string]>).map(([task, label]) => (
+              <button key={task} type="button" className={modelTask === task ? "is-active" : ""} onClick={() => setModelTask(task)}>{label}</button>
+            ))}
+          </div>
+          {!hardware ? (
+            <div className="local-ai-empty local-ai-catalog-needs-scan">
+              <IconMonitor size={26} />
+              <strong>Periksa spesifikasi untuk mengurutkan model</strong>
+              <p>Setelah pemindaian, model akan diberi label hijau, kuning, atau merah dan model teratas dipisahkan sebagai rekomendasi utama.</p>
+              <button type="button" className="btn btn--primary" onClick={() => void scanHardware()} disabled={scanningHardware}>
+                {scanningHardware ? "Memeriksa…" : "Periksa Spesifikasi PC"}
+              </button>
+            </div>
+          ) : (
+            <div className="local-ai-recommendation-list">
+              {assessedModels.map((model, index) => {
+                const installed = models.some((localModel) => localModel.id.toLowerCase() === model.id.toLowerCase());
+                return (
+                  <article key={model.id} className={"local-ai-recommendation-card fit-" + model.fit + (index === 0 ? " is-priority" : "")}>
+                    <div className="local-ai-recommendation-main">
+                      <div className="local-ai-recommendation-rank">{index + 1}</div>
+                      <div className="local-ai-recommendation-copy">
+                        <div className="local-ai-recommendation-title">
+                          <strong>{model.name}</strong>
+                          {index === 0 ? <span className="local-ai-top-tag">PRIORITAS</span> : null}
+                        </div>
+                        <span>{model.id} · {TASK_LABELS[model.task]} · ± {formatGb(model.sizeGb)}</span>
+                        <p>{model.summary}</p>
+                        <span className={"local-ai-fit-label fit-" + model.fit}>{fitLabel(model.fit)}</span>
+                        {model.fit === "unsupported" ? (
+                          <small>Tidak direkomendasikan berdasarkan RAM atau ruang disk yang terdeteksi. Model masih mungkin dipaksa berjalan, tetapi bisa gagal memuat atau memakai swap secara berat.</small>
+                        ) : model.fit === "slow" ? (
+                          <small>Model kemungkinan bisa dijalankan, tetapi respons lebih lambat karena anggaran RAM/VRAM atau akselerasi GPU terbatas.</small>
+                        ) : (
+                          <small>Estimasi memori cukup untuk menjalankan model lebih nyaman. Kecepatan sebenarnya tetap bergantung pada model, konteks, dan runtime.</small>
+                        )}
+                      </div>
+                    </div>
+                    {installed ? (
+                      <button type="button" className="btn btn--sm" onClick={() => onUseModel(model.id)}>Gunakan</button>
+                    ) : (
+                      <button type="button" className="btn btn--sm" onClick={() => void pull(model.id)} disabled={pulling || scanningHardware}>
+                        {pulling ? "Menunggu…" : "Download"}
+                      </button>
+                    )}
                   </article>
                 );
               })}
