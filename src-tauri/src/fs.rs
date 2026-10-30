@@ -328,7 +328,7 @@ pub async fn pick_memory_parent_folder(
                     "-NoProfile",
                     "-STA",
                     "-Command",
-                    r#"[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Pilih folder induk untuk penyimpanan AzaleaHouse'; $dialog.ShowNewFolderButton = $true; $result = $dialog.ShowDialog(); if ($result -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }"#,
+                    r#"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Pilih folder induk untuk penyimpanan AzaleaHouse'; $dialog.ShowNewFolderButton = $true; $result = $dialog.ShowDialog(); if ($result -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }"#,
                 ])
                 .output()
         })
@@ -665,7 +665,8 @@ pub struct FileValidationResult {
     pub error: Option<String>,
 }
 
-/// Validate the selected file type, canonical path, regular-file status, and maximum size.
+/// Reserved for the explicit file-selection grant flow; not currently exposed to the WebView.
+#[allow(dead_code)]
 async fn checked_local_file(path_str: &str, allowed_extensions: &[&str], max_bytes: u64) -> Result<PathBuf, String> {
     let canonical = fs::canonicalize(path_str).await
         .map_err(|_| "File tidak ditemukan atau tidak dapat diakses.".to_string())?;
@@ -684,6 +685,7 @@ async fn checked_local_file(path_str: &str, allowed_extensions: &[&str], max_byt
     Ok(canonical)
 }
 
+#[allow(dead_code)]
 fn is_safe_attachment_name(name: &str) -> bool {
     if name.is_empty() || name == "." || name == ".." || name.contains(':') || name.contains('\0') {
         return false;
@@ -692,6 +694,7 @@ fn is_safe_attachment_name(name: &str) -> bool {
     matches!(components.next(), Some(std::path::Component::Normal(_))) && components.next().is_none()
 }
 
+#[allow(dead_code)]
 const SUPPORTED_ATTACHMENT_EXTENSIONS: &[&str] = &[
     "txt", "md", "markdown", "json", "csv", "ts", "tsx", "js", "jsx",
     "py", "rs", "toml", "yaml", "yml", "html", "css", "xml",
@@ -700,6 +703,7 @@ const SUPPORTED_ATTACHMENT_EXTENSIONS: &[&str] = &[
 
 /// Baca teks dari file yang didukung.
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn read_file_text(path_str: String) -> Result<String, String> {
     let path = checked_local_file(&path_str, TEXT_EXTENSIONS, MAX_FILE_BYTES).await?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -714,6 +718,7 @@ pub async fn read_file_text(path_str: String) -> Result<String, String> {
 
 /// Base64-encode gambar untuk dikirim ke Ollama Chat API.
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn encode_image(path_str: String) -> Result<String, String> {
     let path = checked_local_file(&path_str, IMAGE_EXTENSIONS, MAX_FILE_BYTES).await?;
     let data = fs::read(&path).await.map_err(|e| format!("Gagal membaca gambar: {e}"))?;
@@ -722,6 +727,7 @@ pub async fn encode_image(path_str: String) -> Result<String, String> {
 
 /// Validasi file: ukuran, tipe, path traversal.
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn validate_file(payload: FileValidation) -> Result<FileValidationResult, String> {
     let requested_path = PathBuf::from(&payload.path);
     let max = payload.max_bytes.unwrap_or(MAX_FILE_BYTES).min(MAX_FILE_BYTES);
@@ -760,6 +766,7 @@ pub async fn validate_file(payload: FileValidation) -> Result<FileValidationResu
 
 /// Simpan attachment ke `.AzaleaMemory/attachments/`.
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn save_attachment(source_path: String) -> Result<String, String> {
     let src = checked_local_file(&source_path, SUPPORTED_ATTACHMENT_EXTENSIONS, MAX_FILE_BYTES).await?;
     let base = resolve_memory_path().await;
@@ -790,6 +797,7 @@ pub struct AttachmentInfo {
 }
 
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn list_attachments() -> Result<Vec<AttachmentInfo>, String> {
     let base = resolve_memory_path().await;
     let dir = base.join("attachments");
@@ -829,6 +837,7 @@ pub async fn list_attachments() -> Result<Vec<AttachmentInfo>, String> {
 
 /// Hapus lampiran.
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn delete_attachment(name: String) -> Result<(), String> {
     if !is_safe_attachment_name(&name) {
         return Err("Nama lampiran tidak valid.".to_string());
