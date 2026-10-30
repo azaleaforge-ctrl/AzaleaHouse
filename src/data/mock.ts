@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.1";
+export const FALLBACK_VERSION = "0.1.2";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -56,13 +56,16 @@ export const outputOptions = [256, 384, 512, 1024, 2048] as const;
 
 /** Ekstensi teks yang didukung (Fase 5) */
 export const TEXT_EXTENSIONS = [
-  "txt", "md", "markdown", "json", "csv",
-  "ts", "tsx", "js", "jsx", "py", "rs",
-  "toml", "yaml", "yml", "html", "css", "xml",
+  "txt", "md", "markdown", "json", "csv", "tsv",
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rs",
+  "toml", "yaml", "yml", "html", "htm", "css", "xml",
+  "sql", "sh", "ps1", "java", "c", "h", "cpp", "go",
+  "php", "rb", "swift", "kt", "ini", "log", "env",
+  "vue", "svelte", "astro", "diff",
 ];
 
 /** Ekstensi gambar yang didukung (Fase 5) */
-export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
+export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
 
 /** Batas ukuran file attachment */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -98,10 +101,11 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV011: string[] = [
-  "Build pengembangan 0.1.1: pengamanan operasi filesystem dan validasi migrasi memori lokal.",
-  "Pemindahan lokasi memori memakai dialog folder Windows dan memverifikasi hasil salinan sebelum mengganti lokasi aktif.",
-  "Versi 0.1.1 ini belum diterbitkan sebagai GitHub Release dan tidak menyediakan pemasangan otomatis.",
+export const changelogV012: string[] = [
+  "Build pengembangan 0.1.2: pembaca TXT/Markdown/JSON/CSV/kode, PDF, DOCX, XLSX, dan gambar terpilih.",
+  "Lampiran disimpan secara lokal di .AzaleaMemory dan metadata-nya mengikuti sesi percakapan.",
+  "Ekstraksi PDF tidak memakai OCR; PDF hasil scan atau font/encoding tertentu mungkin tidak terbaca.",
+  "Versi 0.1.2 hanya metadata pengembangan: belum ada GitHub Release, tag, installer, atau update publik.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {

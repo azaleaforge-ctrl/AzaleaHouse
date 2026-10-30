@@ -36,7 +36,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 | 2 — Runtime bridge & chat | **Implemented; CI passes on main** | Ollama IPC, streaming, cancel, and visible errors exist. Interactive Windows/Ollama smoke tests remain a separate requirement. |
 | 3 — Settings & runtime lifecycle | **Implemented; manual acceptance pending** | Thinking/settings and auto/manual keep-alive code exist; verify the one-hour idle and active-generation edge cases on Windows. |
 | 4 — Local storage & .AzaleaMemory | **Partial; hardening in progress** | Conversation/settings persistence exists. Custom-path migration and backup are under Repair Stage 1; restore, memory deletion controls, and full migration failure acceptance remain incomplete. |
-| 5 — File reader & vision | **Partial** | Text/code extraction and an image request path exist. PDF, DOCX, and XLSX parsers are not implemented; image/runtime acceptance remains pending. Native path-based file commands are deliberately not registered until a selected-file grant flow is wired. |
+| 5 — File reader & vision | **Implemented in source; manual acceptance pending** | Stage 2 adds bounded text/code, PDF, DOCX and XLSX extraction; PNG/JPG/JPEG/WebP images; safe byte-only attachment persistence and session metadata. OCR and some PDF fonts/encodings remain limitations; validate with Windows/Ollama samples. |
 | 6 — Document engine | **Not implemented** | Documents view still displays a “coming soon” screen; DOCX/PDF generation and render validation are outstanding. |
 | 7 — Version Center & manual updater | **Partial / blocked** | GitHub metadata check and manual download code exist, but the official signed Tauri updater, signature verification, and Install & Restart are not configured. No GitHub Release is currently published. |
 | 8 — Quality & packaging | **CI infrastructure present; release acceptance pending** | Windows CI checks frontend build and Rust compile/tests. Installer installation/uninstallation, interactive desktop behavior, and end-to-end update tests still need direct acceptance. |
@@ -51,15 +51,25 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Development version and release freeze
 
-- The development branch synchronizes application/package metadata to **0.1.1** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
-- This version change is source/configuration metadata only. It does **not** create a `v0.1.1` tag, GitHub Release, installer upload, or production update.
+- The development branch synchronizes application/package metadata to **0.1.2** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- This version change is source/configuration metadata only. It does **not** create a `v0.1.2` tag, GitHub Release, installer upload, or production update.
 - Keep the release freeze in place until the planned repairs and Windows acceptance tests pass and the owner separately authorizes publication.
 
 ## Security and behavior boundaries
 
 - The frontend does not provide arbitrary shell text for execution. The storage repair uses fixed Windows dialog/probe invocations only.
-- Path-based read/encode/save attachment commands are intentionally not registered in Tauri IPC until the user-selected-file grant flow is implemented. The current UI only reads files selected through its WebView file input.
+- File parsing starts from browser File objects selected explicitly by the user. Persistent attachment IPC accepts byte data plus a validated filename and never opens arbitrary caller-provided paths. Legacy path-based reader/encoder/save commands remain unregistered.
 - The memory migration command consumes a one-time canonical folder selection produced by the native folder picker; it rejects a caller-supplied different destination.
 - Manual installer download is constrained to the configured GitHub repository. Installer execution remains disabled until signed artifacts and the official Tauri updater verification are configured.
 - UI version is read from `tauri.conf.json` via `app_version`, so app-version display follows the Tauri package configuration.
 - Gemma 4 Thinking is controlled through the `<|think|>` system token for the validated Ollama path; this remains model/runtime-specific.
+
+
+## Repair Stage 2 — File Reader & Vision
+
+- File parsing operates in-memory from explicitly user-selected File objects. PDF, DOCX and XLSX contents are treated as untrusted data and are never executed.
+- Supported selected attachments are copied into `.AzaleaMemory/attachments/` through byte-only IPC. The native save command does not accept an arbitrary source file path.
+- Conversation records persist attachment metadata and extracted text; image bytes are stored as local files and reloaded by an app-generated attachment ID when prior sessions are reused.
+- Provisional limits: one attachment up to 5 MiB, at most five files per selection, extracted text up to 30,000 characters per file, selected prompt context up to 12,000 characters.
+- PDF extraction is best-effort for common text streams and FlateDecode. OCR, encrypted PDFs, complex font maps and guaranteed layout/table fidelity are not included. Spreadsheet extraction returns cell values rather than calculations or formatting.
+- Version 0.1.2 is development metadata only. Do not create a release, version tag, installer upload or production update without separate authorization.

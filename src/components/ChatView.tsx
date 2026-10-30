@@ -185,13 +185,15 @@ export function ChatView({
               </span>
               {a.format === "image" && a.base64 ? (
                 <img
-                  src={`data:image;base64,${a.base64}`}
+                  src={`data:${a.mimeType ?? "image/png"};base64,${a.base64}`}
                   alt={a.name}
                   className="attachment-thumb"
                 />
               ) : a.error ? (
                 <span className="attachment-error">{a.error}</span>
               ) : null}
+              {a.storageWarning ? <span className="attachment-warning">{a.storageWarning}</span> : null}
+              {a.id ? <span className="attachment-status">Tersimpan lokal</span> : null}
               <button
                 type="button"
                 className="attachment-remove"
@@ -212,6 +214,7 @@ export function ChatView({
         onSend={send}
         onStop={onStop}
         busy={genState !== "idle"}
+        hasAttachments={attachments.length > 0}
         thinking={thinking}
         onToggleThinking={onToggleThinking}
         thinkingSupported={thinkingSupported}

@@ -40,9 +40,11 @@ pub fn run() {
             fs::pick_memory_parent_folder,
             fs::set_custom_path,
             fs::backup_memory,
-            // File path commands stay unregistered until the attachment flow has
-            // an explicit selected-file grant. The current UI reads only files
-            // the user picked through the WebView file input.
+            // Only bytes supplied from a user-selected File object are accepted.
+            // No arbitrary source filesystem path is exposed through IPC.
+            fs::save_attachment_bytes,
+            fs::load_attachment_base64,
+            // Legacy arbitrary-path reader/encoder commands remain unregistered.
 
             // Phase 7: Version Center & Manual Updater
             updater::check_update,

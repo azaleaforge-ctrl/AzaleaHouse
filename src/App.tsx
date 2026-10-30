@@ -4,6 +4,7 @@ import type {
   AppSettings,
   GenState,
   Message,
+  MessageAttachment,
   ProfileId,
   RuntimeStatus,
   View,
@@ -16,8 +17,6 @@ import {
   MAX_FILE_BYTES,
   models,
   profileById,
-  TEXT_EXTENSIONS,
-  IMAGE_EXTENSIONS,
 } from "./data/mock";
 import { clockNow, uid } from "./lib/format";
 import { readAppVersion } from "./lib/tauri";
@@ -43,6 +42,8 @@ import {
   listenUpdateProgress,
   invokeUnloadModel,
   invokeLoadModel,
+  invokeSaveAttachmentBytes,
+  invokeLoadAttachmentBase64,
   listenChatEvents,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -55,6 +56,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
 import { ComingSoon } from "./components/ComingSoon";
 import { IconFile, IconImage } from "./components/Icons";
+import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
 
 function formatConversationTimestamp(value: string): string {
   const date = new Date(value);
@@ -64,6 +66,53 @@ function formatConversationTimestamp(value: string): string {
 
 const AUTO_UNLOAD_IDLE_MS = 60 * 60 * 1000;
 const KEEPALIVE_CHECK_MS = 30 * 1000;
+
+/** Compile only recent, relevant attachment excerpts into model context. */
+async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload["messages"]> {
+  const userMessagesWithAttachments = messages
+    .filter((message) => message.role === "user" && Boolean(message.attachments?.length))
+    .slice(-3);
+  const selectedIds = new Set(userMessagesWithAttachments.map((message) => message.id));
+  const recentAttachments = userMessagesWithAttachments.flatMap((message) => message.attachments ?? []);
+  const latestUser = [...messages].reverse().find((message) => message.role === "user");
+  const attachmentContext = buildAttachmentContext(latestUser?.text ?? "", recentAttachments);
+
+  // Keep the full request bounded even when the conversation contains many prior image uploads.
+  let remainingImageSlots = 5;
+  const imageSlotsByMessage = new Map<string, number>();
+  for (const message of [...userMessagesWithAttachments].reverse()) {
+    const imageCount = (message.attachments ?? []).filter((attachment) => attachment.format === "image").length;
+    const allowed = Math.min(imageCount, remainingImageSlots);
+    if (allowed > 0) imageSlotsByMessage.set(message.id, allowed);
+    remainingImageSlots -= allowed;
+    if (remainingImageSlots === 0) break;
+  }
+
+  return Promise.all(messages.map(async (message) => {
+    let images: string[] | undefined;
+    const imageLimit = imageSlotsByMessage.get(message.id) ?? 0;
+    if (message.role === "user" && selectedIds.has(message.id) && imageLimit > 0) {
+      if (message.images?.length) {
+        images = message.images.slice(0, imageLimit);
+      } else {
+        const imageAttachments = (message.attachments ?? [])
+          .filter((attachment) => attachment.format === "image" && attachment.id)
+          .slice(0, imageLimit);
+        const loaded = await Promise.all(imageAttachments.map(async (attachment) => {
+          const base64 = attachment.id ? await invokeLoadAttachmentBase64(attachment.id) : null;
+          return base64 ?? "";
+        }));
+        const available = loaded.filter(Boolean);
+        if (available.length) images = available;
+      }
+    }
+    return {
+      role: message.role,
+      content: message.text + (message.id === latestUser?.id ? attachmentContext : ""),
+      ...(images?.length ? { images } : {}),
+    };
+  }));
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, blurIntensity: 50 },
@@ -108,57 +157,52 @@ export default function App() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [memoryInitialized, setMemoryInitialized] = useState(false);
 
-  // Handle file attachment: validate, read, and prepare for chat
+  // Parse selected files in memory, then persist accepted bytes to .AzaleaMemory.
   const handleAttachFiles = useCallback(async (fileList: FileList) => {
-    const files = Array.from(fileList).slice(0, 5); // batasi 5 file per pesan
+    const files = Array.from(fileList).slice(0, 5);
     for (const file of files) {
-      const path = file.name; // di Tauri, kita dapat path lengkap via file API atau invoke
-      // Validasi ukuran
       if (file.size > MAX_FILE_BYTES) {
-        setAttachments((prev) => [...prev, {
+        const overLimit: Attachment = {
           name: file.name,
-          path,
+          path: file.name,
           size: file.size,
           format: "other",
-          error: `Ukuran melebihi ${MAX_FILE_BYTES / 1024 / 1024} MB`,
-        }]);
+          error: "Ukuran file melebihi batas 5 MB.",
+        };
+        setAttachments((previous) => [...previous.filter((item) => item.name !== file.name), overLimit]);
         continue;
       }
 
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      const format = IMAGE_EXTENSIONS.includes(ext)
-        ? "image"
-        : TEXT_EXTENSIONS.includes(ext)
-          ? "text"
-          : "other";
-
-      const att: Attachment = {
-        name: file.name,
-        path,
-        size: file.size,
-        format,
-      };
-
-      // Process file content
-      if (format === "image") {
-        // Read image as base64 from File API
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          const base64 = dataUrl.split(",")[1] ?? "";
-          setAttachments((prev) => [...prev.filter((a) => a.name !== file.name), { ...att, base64 }]);
+      try {
+        const parsed = await parseSelectedFile(file);
+        const saved = parsed.base64
+          ? await invokeSaveAttachmentBytes(file.name, parsed.mimeType, parsed.base64)
+          : null;
+        const attachment: Attachment = {
+          name: file.name,
+          path: file.name,
+          size: saved?.size ?? file.size,
+          format: parsed.format,
+          mimeType: saved?.mimeType ?? parsed.mimeType,
+          content: parsed.content,
+          base64: parsed.format === "image" && !parsed.error ? parsed.base64 : undefined,
+          id: saved?.id,
+          storagePath: saved?.storagePath,
+          error: parsed.error,
+          storageWarning: parsed.base64 && !saved
+            ? "Lampiran belum tersimpan permanen di .AzaleaMemory; file hanya tersedia selama sesi ini."
+            : undefined,
         };
-        reader.readAsDataURL(file);
-      } else if (format === "text") {
-        // Read text content
-        const text = await file.text();
-        setAttachments((prev) => [...prev.filter((a) => a.name !== file.name), { ...att, content: text.slice(0, 8000) }]);
-      } else {
-        // Unsupported format — show error
-        setAttachments((prev) => [...prev.filter((a) => a.name !== file.name), {
-          ...att,
-          error: `Format .${ext} belum didukung`,
-        }]);
+        setAttachments((previous) => [...previous.filter((item) => item.name !== file.name), attachment]);
+      } catch (error) {
+        const failed: Attachment = {
+          name: file.name,
+          path: file.name,
+          size: file.size,
+          format: "other",
+          error: error instanceof Error ? error.message : "File tidak dapat dibaca.",
+        };
+        setAttachments((previous) => [...previous.filter((item) => item.name !== file.name), failed]);
       }
     }
   }, []);
@@ -308,6 +352,7 @@ export default function App() {
             text: message.text,
             time: message.time,
             streaming: false,
+            attachments: message.attachments,
           })));
         }
       }
@@ -607,6 +652,7 @@ export default function App() {
         role: message.role,
         text: message.text,
         time: message.time,
+        attachments: message.attachments,
       })),
     };
 
@@ -726,24 +772,25 @@ export default function App() {
 
       setChatError(null);
 
-      let attachmentContext = "";
-      const images: string[] = [];
-      for (const a of attached) {
-        if (a.format === "image" && a.base64) images.push(a.base64);
-        if (a.content) {
-          attachmentContext += `\n\n--- Lampiran: ${a.name} ---\n${a.content.slice(0, 4000)}\n---`;
-        }
-        if (a.error) {
-          attachmentContext += `\n\n[Lampiran: ${a.name} — ${a.error}]`;
-        }
-      }
-
+      const images = attached
+        .filter((attachment) => attachment.format === "image" && attachment.base64)
+        .map((attachment) => attachment.base64 as string);
+      const attachmentMetadata: MessageAttachment[] = attached.map((attachment) => ({
+        ...(attachment.id ? { id: attachment.id } : {}),
+        name: attachment.name,
+        size: attachment.size,
+        format: attachment.format,
+        mimeType: attachment.mimeType,
+        content: attachment.content,
+        error: attachment.error,
+      }));
       const userMsg: Message = {
         id: uid(),
         role: "user",
-        text: t + attachmentContext,
+        text: t,
         time: clockNow(),
         images: images.length > 0 ? images : undefined,
+        attachments: attachmentMetadata,
       };
       const messagesBeforeSend = messagesRef.current;
       lastActivityRef.current = Date.now();
@@ -757,15 +804,31 @@ export default function App() {
         { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true },
       ]);
 
+      chatStartPendingRef.current = true;
+      cancelBeforeStartRef.current = false;
+      let modelMessages: ChatStartPayload["messages"];
+      try {
+        modelMessages = await buildModelMessages([...messagesBeforeSend, userMsg]);
+      } catch {
+        chatStartPendingRef.current = false;
+        setMessages((current) => current.filter((message) => message.id !== msgId && message.id !== userMsg.id));
+        if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+        setGenState("idle");
+        setChatError("Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
+        return false;
+      }
+      if (cancelBeforeStartRef.current) {
+        chatStartPendingRef.current = false;
+        cancelBeforeStartRef.current = false;
+        streamIdRef.current = null;
+        return false;
+      }
+
       const payload: ChatStartPayload = {
         model: settings.ai.model,
-        messages: [...messagesBeforeSend, userMsg].map((message) => ({
-          role: message.role,
-          content: message.text,
-          images: message.images,
-        })),
+        messages: modelMessages,
         think: settings.ai.thinking,
-      runtimePolicy: settings.ai.runtimePolicy,
+        runtimePolicy: settings.ai.runtimePolicy,
         options: {
           temperature: settings.ai.temperature,
           num_ctx: settings.ai.contextWindow,
@@ -778,8 +841,6 @@ export default function App() {
         },
       };
 
-      chatStartPendingRef.current = true;
-      cancelBeforeStartRef.current = false;
       const id = await invokeChatStart(payload);
       chatStartPendingRef.current = false;
 
@@ -890,60 +951,70 @@ export default function App() {
       { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true },
     ]);
 
-    const payload: ChatStartPayload = {
-      model: settings.ai.model,
-      messages: messagesToSend.map((message) => ({
-        role: message.role,
-        content: message.text,
-        images: message.images,
-      })),
-      think: settings.ai.thinking,
-        runtimePolicy: settings.ai.runtimePolicy,
-      options: {
-        temperature: settings.ai.temperature,
-        num_ctx: settings.ai.contextWindow,
-        num_predict: settings.ai.maxOutputTokens,
-        top_p: settings.ai.topP,
-        top_k: settings.ai.topK,
-        repeat_penalty: settings.ai.repeatPenalty,
-        stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
-        seed: settings.ai.seed,
-      },
-    };
-
     chatStartPendingRef.current = true;
     cancelBeforeStartRef.current = false;
-    void invokeChatStart(payload).then((id) => {
-      chatStartPendingRef.current = false;
-      if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
-        cancelBeforeStartRef.current = false;
-        if (id) {
-          if (cancelledStreamIdsRef.current.get(id) === true) {
-            cancelledStreamIdsRef.current.delete(id);
-          } else {
-            cancelledStreamIdsRef.current.set(id, false);
-            void invokeChatCancel(id);
-          }
+    void (async () => {
+      try {
+        const payload: ChatStartPayload = {
+          model: settings.ai.model,
+          messages: await buildModelMessages(messagesToSend),
+          think: settings.ai.thinking,
+          runtimePolicy: settings.ai.runtimePolicy,
+          options: {
+            temperature: settings.ai.temperature,
+            num_ctx: settings.ai.contextWindow,
+            num_predict: settings.ai.maxOutputTokens,
+            top_p: settings.ai.topP,
+            top_k: settings.ai.topK,
+            repeat_penalty: settings.ai.repeatPenalty,
+            stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
+            seed: settings.ai.seed,
+          },
+        };
+        if (cancelBeforeStartRef.current) {
+          chatStartPendingRef.current = false;
+          cancelBeforeStartRef.current = false;
+          streamIdRef.current = null;
+          return;
         }
-        streamIdRef.current = null;
-        return;
-      }
-      if (id) {
-        streamIdRef.current = id;
+        const id = await invokeChatStart(payload);
+        chatStartPendingRef.current = false;
+        if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
+          cancelBeforeStartRef.current = false;
+          if (id) {
+            if (cancelledStreamIdsRef.current.get(id) === true) {
+              cancelledStreamIdsRef.current.delete(id);
+            } else {
+              cancelledStreamIdsRef.current.set(id, false);
+              void invokeChatCancel(id);
+            }
+          }
+          streamIdRef.current = null;
+          return;
+        }
+        if (id) {
+          streamIdRef.current = id;
+          lastActivityRef.current = Date.now();
+          lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+          return;
+        }
+        cancelBeforeStartRef.current = false;
         lastActivityRef.current = Date.now();
-        // The chat request itself has applied this keep_alive policy to Ollama.
-        lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
-        return;
+        setMessages((messages) => messages.filter((message) => message.id !== msgId));
+        if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+        streamIdRef.current = null;
+        setGenState("idle");
+        setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
+        void refreshRuntimeStatus();
+      } catch {
+        chatStartPendingRef.current = false;
+        cancelBeforeStartRef.current = false;
+        if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+        setMessages((messages) => messages.filter((message) => message.id !== msgId));
+        setGenState("idle");
+        setChatError("Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
       }
-      cancelBeforeStartRef.current = false;
-      lastActivityRef.current = Date.now();
-      setMessages((messages) => messages.filter((message) => message.id !== msgId));
-      if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
-      streamIdRef.current = null;
-      setGenState("idle");
-      setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
-      void refreshRuntimeStatus();
-    });
+    })();
   }, [genState, runtimeStatus, settings.ai, refreshRuntimeStatus]);
 
   // ── New chat ──
@@ -1006,6 +1077,7 @@ export default function App() {
         text: message.text,
         time: message.time,
         streaming: false,
+        attachments: message.attachments,
       })));
       setAttachments([]);
       setChatError(null);

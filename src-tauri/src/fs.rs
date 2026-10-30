@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -59,6 +60,8 @@ pub struct ConversationMessage {
     pub text: String,
     pub time: String,
     pub thinking: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<serde_json::Value>,
 }
 
 /// Payload untuk menyimpan pengaturan (disediakan frontend).
@@ -640,13 +643,189 @@ pub struct ConversationSummary {
 // ──── Phase 5: File Reader & Vision ────
 
 /// Ekstensi yang didukung untuk ekstraksi teks.
-const TEXT_EXTENSIONS: &[&str] = &["txt", "md", "markdown", "json", "csv", "ts", "tsx", "js", "jsx", "py", "rs", "toml", "yaml", "yml", "html", "css", "xml"];
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "json", "csv", "tsv", "ts", "tsx", "js", "jsx",
+    "mjs", "cjs", "py", "rs", "toml", "yaml", "yml", "html", "htm", "css",
+    "xml", "sql", "sh", "ps1", "java", "c", "h", "cpp", "go", "php", "rb",
+    "swift", "kt", "ini", "log", "env", "vue", "svelte", "astro", "diff",
+];
 
 /// Ekstensi gambar yang didukung untuk vision.
-const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 
-/// Batas ukuran file default: 5 MB.
+/// Batas ukuran satu lampiran: 5 MB.
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedAttachment {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub storage_path: String,
+}
+
+fn attachment_mime_for_extension(extension: &str) -> &'static str {
+    match extension {
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "json" => "application/json",
+        "csv" | "tsv" => "text/csv",
+        "md" | "markdown" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "xml" => "application/xml",
+        _ => "text/plain",
+    }
+}
+
+fn attachment_signature_is_valid(extension: &str, bytes: &[u8]) -> bool {
+    match extension {
+        "pdf" => bytes.starts_with(b"%PDF-"),
+        "docx" | "xlsx" => bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06"),
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" | "jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        _ => !bytes.contains(&0),
+    }
+}
+
+/// Resolve the attachment directory without following a symlink at the attachments entry.
+async fn attachment_directory(create: bool) -> Result<PathBuf, String> {
+    let base = resolve_memory_path().await;
+    let canonical_base = fs::canonicalize(&base).await
+        .map_err(|error| format!("Folder .AzaleaMemory tidak dapat diverifikasi: {error}"))?;
+    let directory = canonical_base.join("attachments");
+
+    match fs::symlink_metadata(&directory).await {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Folder attachments harus berupa direktori lokal biasa, bukan symlink.".to_string());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+            fs::create_dir(&directory).await
+                .map_err(|error| format!("Gagal membuat folder attachments: {error}"))?;
+            let metadata = fs::symlink_metadata(&directory).await
+                .map_err(|error| format!("Gagal memverifikasi folder attachments: {error}"))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Folder attachments tidak aman.".to_string());
+            }
+        }
+        Err(error) => return Err(format!("Folder attachments tidak dapat dibaca: {error}")),
+    }
+
+    let canonical_directory = fs::canonicalize(&directory).await
+        .map_err(|error| format!("Folder attachments tidak dapat diverifikasi: {error}"))?;
+    if !canonical_directory.starts_with(&canonical_base) {
+        return Err("Folder attachments berada di luar .AzaleaMemory.".to_string());
+    }
+    Ok(canonical_directory)
+}
+
+/// Persist only bytes supplied by a user-selected file; no arbitrary source path is accepted.
+#[tauri::command]
+pub async fn save_attachment_bytes(
+    name: String,
+    mime_type: Option<String>,
+    base64_data: String,
+) -> Result<SavedAttachment, String> {
+    if !is_safe_attachment_name(&name)
+        || name.len() > 255
+        || name.chars().any(|character| character.is_control() || character == '/' || character == '\\')
+    {
+        return Err("Nama lampiran tidak valid.".to_string());
+    }
+    let extension = Path::new(&name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !SUPPORTED_ATTACHMENT_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!("Format lampiran tidak didukung: .{extension}"));
+    }
+    if base64_data.len() > 7 * 1024 * 1024 {
+        return Err("Data lampiran melewati batas transfer.".to_string());
+    }
+    let bytes = STANDARD.decode(base64_data.as_bytes())
+        .map_err(|_| "Data lampiran bukan base64 yang valid.".to_string())?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err("Ukuran lampiran harus lebih dari 0 dan tidak boleh melebihi 5 MB.".to_string());
+    }
+    if !attachment_signature_is_valid(&extension, &bytes) {
+        return Err("Isi file tidak cocok dengan ekstensi yang dipilih atau bukan file yang didukung.".to_string());
+    }
+
+    let _provided_mime = mime_type.unwrap_or_default();
+    let mime_type = attachment_mime_for_extension(&extension).to_string();
+    let directory = attachment_directory(true).await?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let id = format!("att_{}_{}", timestamp, std::process::id());
+    let destination = directory.join(format!("{id}.{extension}"));
+    let temporary = directory.join(format!("{id}.part"));
+    fs::write(&temporary, &bytes).await
+        .map_err(|error| format!("Gagal menyimpan lampiran: {error}"))?;
+    if let Err(error) = fs::rename(&temporary, &destination).await {
+        let _ = fs::remove_file(&temporary).await;
+        return Err(format!("Gagal menyelesaikan penyimpanan lampiran: {error}"));
+    }
+
+    Ok(SavedAttachment {
+        id,
+        name,
+        size: bytes.len() as u64,
+        mime_type,
+        storage_path: destination.to_string_lossy().to_string(),
+    })
+}
+
+/// Load stored attachment bytes by a generated ID, never by caller-supplied path.
+#[tauri::command]
+pub async fn load_attachment_base64(id: String) -> Result<String, String> {
+    let suffix = id.strip_prefix("att_").unwrap_or("");
+    if suffix.is_empty()
+        || suffix.len() > 48
+        || !suffix.bytes().all(|byte| byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err("ID lampiran tidak valid.".to_string());
+    }
+    let directory = attachment_directory(false).await?;
+    let mut entries = fs::read_dir(&directory).await
+        .map_err(|error| format!("Folder lampiran tidak dapat dibaca: {error}"))?;
+    while let Some(entry) = entries.next_entry().await
+        .map_err(|error| format!("Gagal membaca daftar lampiran: {error}"))?
+    {
+        let path = entry.path();
+        if path.file_stem().and_then(|stem| stem.to_str()) != Some(id.as_str()) {
+            continue;
+        }
+        let file_type = entry.file_type().await
+            .map_err(|error| format!("Gagal memeriksa lampiran: {error}"))?;
+        if !file_type.is_file() || file_type.is_symlink() {
+            return Err("Lampiran tersimpan bukan file biasa.".to_string());
+        }
+        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+        if !SUPPORTED_ATTACHMENT_EXTENSIONS.contains(&extension.as_str()) {
+            return Err("Format lampiran tersimpan tidak diizinkan.".to_string());
+        }
+        let metadata = entry.metadata().await
+            .map_err(|error| format!("Gagal membaca ukuran lampiran: {error}"))?;
+        if metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
+            return Err("Ukuran lampiran tersimpan tidak valid.".to_string());
+        }
+        let bytes = fs::read(&path).await
+            .map_err(|error| format!("Gagal membaca lampiran tersimpan: {error}"))?;
+        return Ok(STANDARD.encode(bytes));
+    }
+    Err("Lampiran tersimpan tidak ditemukan.".to_string())
+}
 
 /// Payload validasi file.
 #[derive(Deserialize)]
@@ -696,9 +875,11 @@ fn is_safe_attachment_name(name: &str) -> bool {
 
 #[allow(dead_code)]
 const SUPPORTED_ATTACHMENT_EXTENSIONS: &[&str] = &[
-    "txt", "md", "markdown", "json", "csv", "ts", "tsx", "js", "jsx",
-    "py", "rs", "toml", "yaml", "yml", "html", "css", "xml",
-    "png", "jpg", "jpeg", "webp", "gif",
+    "txt", "md", "markdown", "json", "csv", "tsv", "ts", "tsx", "js", "jsx",
+    "mjs", "cjs", "py", "rs", "toml", "yaml", "yml", "html", "htm", "css",
+    "xml", "sql", "sh", "ps1", "java", "c", "h", "cpp", "go", "php", "rb",
+    "swift", "kt", "ini", "log", "env", "vue", "svelte", "astro", "diff",
+    "pdf", "docx", "xlsx", "png", "jpg", "jpeg", "webp",
 ];
 
 /// Baca teks dari file yang didukung.
@@ -902,7 +1083,7 @@ fn base64_encode(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod conversation_storage_tests {
-    use super::{is_safe_attachment_name, is_safe_conversation_id};
+    use super::{attachment_signature_is_valid, is_safe_attachment_name, is_safe_conversation_id};
 
     #[test]
     fn accepts_app_generated_session_ids() {
@@ -917,6 +1098,16 @@ mod conversation_storage_tests {
         assert!(!is_safe_conversation_id("folder\\\\file"));
         assert!(!is_safe_conversation_id("id with spaces"));
         assert!(!is_safe_conversation_id(&"a".repeat(129)));
+    }
+
+    #[test]
+    fn validates_attachment_signature_against_extension() {
+        assert!(attachment_signature_is_valid("pdf", b"%PDF-1.7"));
+        assert!(!attachment_signature_is_valid("pdf", b"PK\x03\x04"));
+        assert!(attachment_signature_is_valid("png", b"\x89PNG\r\n\x1a\nrest"));
+        assert!(!attachment_signature_is_valid("png", b"not an image"));
+        assert!(attachment_signature_is_valid("docx", b"PK\x03\x04archive"));
+        assert!(!attachment_signature_is_valid("txt", b"binary\0data"));
     }
 
     #[test]

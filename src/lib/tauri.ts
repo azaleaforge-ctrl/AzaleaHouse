@@ -149,6 +149,7 @@ export interface StoredMessage {
   role: "user" | "assistant";
   text: string;
   time: string;
+  attachments?: import("../types").MessageAttachment[];
 }
 
 /** Dapatkan path .AzaleaMemory yang sedang dipakai. */
@@ -297,6 +298,44 @@ export async function invokeBackupMemory(): Promise<string | null> {
 // ───────────────────────────────
 // File Reader & Vision (Phase 5)
 // ───────────────────────────────
+
+export interface SavedAttachment {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  storagePath: string;
+}
+
+/** Save byte data read from a user-selected File. Arbitrary paths are not accepted. */
+export async function invokeSaveAttachmentBytes(
+  name: string,
+  mimeType: string,
+  base64Data: string,
+): Promise<SavedAttachment | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<SavedAttachment>("save_attachment_bytes", {
+      name,
+      mimeType,
+      base64Data,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Load a stored attachment through its app-generated opaque ID. */
+export async function invokeLoadAttachmentBase64(id: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<string>("load_attachment_base64", { id });
+  } catch {
+    return null;
+  }
+}
 
 export interface FileValidationResult {
   valid: boolean;
