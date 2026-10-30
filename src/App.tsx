@@ -173,7 +173,7 @@ export default function App() {
           format: parsed.format,
           mimeType: saved?.mimeType ?? parsed.mimeType,
           content: parsed.content,
-          base64: parsed.format === "image" ? parsed.base64 : undefined,
+          base64: parsed.format === "image" && !parsed.error ? parsed.base64 : undefined,
           id: saved?.id,
           storagePath: saved?.storagePath,
           error: parsed.error,
