@@ -1,0 +1,565 @@
+//! AzaleaHouse → Ollama runtime bridge (Phase 2).
+//!
+//! Semua operasi privileged ke model lokal melewati command API Tauri yang terbatas:
+//!   - `runtime_status`  : pemeriksaan kesehatan + status model (mapping eksplisit).
+//!   - `list_models`     : model yang tersedia di mesin lokal saja.
+//!   - `chat_start`      : streaming percakapan (SSE) ke frontend via event.
+//!   - `chat_cancel`     : pembatalan berdasarkan token, tidak menghang.
+//!   - `load_model`      : preload / keep-alive (1 jam) sesuai kebijakan.
+//!
+//! Backend tidak pernah menerima perintah shell string bebas; satu-satunya proses
+//! eksternal adalah probe `where ollama` (path resmi) untuk memberi petunjuk.
+
+use std::collections::HashMap;
+use std::error::Error;
+use std::time::Duration;
+
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use tauri::{Emitter, State};
+use tokio::sync::{Mutex, oneshot};
+
+/// Endpoint Ollama yang dipakai. Di masa mendatang bisa jadi konfigurasi user,
+/// tapi untuk MVP selalu ke localhost default.
+const OLLAMA_BASE: &str = "http://127.0.0.1:11434";
+const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Satus runtime yang sama dengan kosakata di frontend (PRD 9.1).
+pub type RuntimeStatus = String;
+
+pub const STATUS_NOT_INSTALLED: &str = "not_installed";
+pub const STATUS_UNAVAILABLE: &str = "runtime_unavailable";
+pub const STATUS_MODEL_NOT_DOWNLOADED: &str = "model_not_downloaded";
+pub const STATUS_UNLOADED: &str = "unloaded";
+#[allow(dead_code)]
+pub const STATUS_LOADING: &str = "loading";
+pub const STATUS_READY: &str = "ready";
+#[allow(dead_code)]
+pub const STATUS_THINKING: &str = "thinking";
+#[allow(dead_code)]
+pub const STATUS_GENERATING: &str = "generating";
+#[allow(dead_code)]
+pub const STATUS_UNLOADING: &str = "unloading";
+pub const STATUS_ERROR: &str = "error";
+
+/// Ringkasan model dari `/api/tags` + dukungan fitur yang terdeteksi.
+#[derive(Serialize, Clone)]
+#[allow(dead_code)]
+pub struct ModelMeta {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub thinking_supported: bool,
+    pub vision_supported: bool,
+    pub note: String,
+}
+
+/// Payload chat dari frontend. Diterima sebagai DTO ketat (bukan string mentah).
+#[derive(Deserialize)]
+pub struct ChatRequest {
+    pub model: String,
+    pub messages: Vec<ChatMessageIn>,
+    pub think: bool,
+    pub options: ChatOptions,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct ChatMessageIn {
+    pub role: String,
+    pub content: String,
+    /// Base64-encoded images (untuk vision pipeline). Kosong untuk teks saja.
+    #[serde(default)]
+    pub images: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Clone, Default)]
+pub struct ChatOptions {
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
+    #[serde(default)]
+    pub num_predict: Option<i32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    #[serde(default)]
+    pub repeat_penalty: Option<f32>,
+    #[serde(default)]
+    pub stop: Option<Vec<String>>,
+    #[serde(default)]
+    pub seed: Option<i32>,
+}
+
+/// Event yang di-_emit_ ke frontend per potongan.
+#[derive(Serialize, Clone)]
+#[allow(dead_code)]
+pub struct ChatChunk {
+    pub id: String,
+    pub model: String,
+    pub thinking: Option<String>,
+    pub content: Option<String>,
+}
+#[derive(Serialize, Clone)]
+#[allow(dead_code)]
+pub struct ChatDone {
+    pub id: String,
+    pub prompt_eval: Option<PromptEval>,
+    pub eval: Option<EvalStats>,
+}
+#[derive(Serialize, Clone)]
+#[allow(dead_code)]
+pub struct PromptEval {
+    pub total: u32,
+    pub tokens_per_second: f32,
+}
+#[derive(Serialize, Clone)]
+#[allow(dead_code)]
+pub struct EvalStats {
+    pub total: u32,
+    pub tokens_per_second: f32,
+}
+#[derive(Serialize, Clone)]
+#[allow(dead_code)]
+pub struct ChatError {
+    pub id: String,
+    pub code: String,
+    pub message: String,
+}
+
+/// State global: mengikat token pembatalan tiap stream yang sedang jalan.
+pub struct ActiveStreams(pub Mutex<HashMap<String, oneshot::Sender<()>>>);
+
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .no_gzip()
+        .build()
+        .expect("reqwest client")
+}
+
+/// Periksa apakah binary `ollama` ada di PATH (untuk petunjuk, bukan eksekusi).
+fn probe_ollama_on_path() -> bool {
+    let res = std::process::Command::new("cmd")
+        .args(["/C", "where ollama"])
+        .output()
+        .ok();
+    matches!(res, Some(o) if o.status.success())
+}
+
+#[tauri::command]
+pub async fn runtime_status(model: Option<String>) -> RuntimeStatus {
+    let http = client();
+
+    // 1) Apakah layanan Ollama mendengar?
+    let probe = http.get(format!("{OLLAMA_BASE}/api/ps")).send().await;
+    match probe {
+        Ok(resp) => {
+            // Service up. Cek apakah model kami sudah termuat di RAM.
+            if let Ok(ps) = resp.json::<serde_json::Value>().await {
+                let running = ps
+                    .get("models")
+                    .and_then(|m| m.as_array())
+                    .map(|arr| {
+                        arr.iter().any(|x| {
+                            x.get("name")
+                                .and_then(|n| n.as_str())
+                                .map(|name| {
+                                    let wanted = model.as_deref().unwrap_or_default();
+                                    name == wanted || name.starts_with(&format!("{wanted}:"))
+                                })
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false);
+                if running {
+                    return STATUS_READY.to_owned();
+                }
+                if let Some(m) = model {
+                    // Service up tapi model belum di-pull → belum bisa dimuat.
+                    let tags = http.get(format!("{OLLAMA_BASE}/api/tags")).send().await;
+                    if let Ok(t) = tags {
+                        if let Ok(val) = t.json::<serde_json::Value>().await {
+                            let has = val
+                                .get("models")
+                                .and_then(|m| m.as_array())
+                                .map(|arr| {
+                                    arr.iter().any(|x| {
+                                        x.get("name")
+                                            .and_then(|n| n.as_str())
+                                            .map(|name| {
+                                                name == m.as_str()
+                                                    || name.starts_with(&format!("{}:", m.as_str()))
+                                            })
+                                            .unwrap_or(false)
+                                    })
+                                })
+                                .unwrap_or(false);
+                            if !has {
+                                return STATUS_MODEL_NOT_DOWNLOADED.to_owned();
+                            }
+                        }
+                    }
+                }
+                return STATUS_UNLOADED.to_owned();
+            }
+            STATUS_ERROR.to_owned()
+        }
+        Err(ref e) if is_conn_refused(e) => {
+            if probe_ollama_on_path() {
+                STATUS_UNAVAILABLE.to_owned()
+            } else {
+                STATUS_NOT_INSTALLED.to_owned()
+            }
+        }
+        Err(_) => STATUS_ERROR.to_owned(),
+    }
+}
+
+fn is_conn_refused(e: &reqwest::Error) -> bool {
+    if let Some(ce) = e.source().and_then(|s| s.downcast_ref::<std::io::Error>()) {
+        return ce.kind() == std::io::ErrorKind::ConnectionRefused
+            || ce.to_string().to_lowercase().contains("connection refused");
+    }
+    false
+}
+
+#[tauri::command]
+pub async fn list_models() -> Result<Vec<ModelMeta>, String> {
+    let http = client();
+    let resp = http
+        .get(format!("{OLLAMA_BASE}/api/tags"))
+        .send()
+        .await
+        .map_err(|e| format!("Gagal menghubungi Ollama: {e}"))?;
+
+    let val: serde_json::Value = resp.json().await.map_err(|e| format!("Respons tidak valid: {e}"))?;
+    let arr = val.get("models").and_then(|m| m.as_array()).ok_or("Tidak ada model")?;
+
+    let mut out = Vec::new();
+    for m in arr {
+        let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?").to_owned();
+        let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+        let (thinking, vision, note) = infer_caps(&name);
+        out.push(ModelMeta {
+            id: name.clone(),
+            name,
+            size,
+            thinking_supported: thinking,
+            vision_supported: vision,
+            note,
+        });
+    }
+    Ok(out)
+}
+
+/// Heuristik dukungan fitur berdasarkan nama model — diverifikasi manual di Phase 0.
+/// Nilainya bersumber dari daftar model Ollama, bukan dianggap otomatis.
+fn infer_caps(name: &str) -> (bool, bool, String) {
+    let lower = name.to_ascii_lowercase();
+    let thinking = lower.contains("gemma4")
+        || lower.contains("deepseek-r1")
+        || lower.contains("gemma3:27b")
+        || lower.contains("o1");
+    let vision = lower.contains("gemma4")
+        || lower.contains("gemma3:27b")
+        || lower.contains("llava")
+        || lower.contains("phi-3.5-vision");
+    let note = if thinking && vision {
+        "multimodal · mendukung thinking".to_owned()
+    } else if thinking {
+        "teks · mendukung thinking".to_owned()
+    } else {
+        "teks".to_owned()
+    };
+    (thinking, vision, note)
+}
+
+#[tauri::command]
+pub async fn chat_start(
+    app: tauri::AppHandle,
+    state: State<'_, ActiveStreams>,
+    payload: ChatRequest,
+) -> Result<String, String> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let id = format!("{}-{}", payload.model, nanos);
+    let model_label = payload.model.clone();
+
+    // Daftarkan token pembatalan. Jika sudah ada stream dengan id sama, batal dulu.
+    let (tx, rx) = oneshot::channel::<()>();
+    {
+        let mut map = state.0.lock().await;
+        if let Some(prev) = map.remove(&id) {
+            let _ = prev.send(());
+        }
+        map.insert(id.clone(), tx);
+    }
+
+    // Clone diperlukan agar task berkelanjutan dan tidak memegang lock.
+    tokio::spawn(chat_worker(app.clone(), id.clone(), payload, rx));
+
+    // Eikon: beri tahu frontend stream dimulai.
+    app.emit("azalea:chat_started", serde_json::json!({ "id": id, "model": model_label }))
+        .map_err(|e| format!("Gagal memulai stream: {e}"))?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn chat_cancel(state: State<'_, ActiveStreams>, id: String) -> Result<(), String> {
+    let mut map = state.0.lock().await;
+    if let Some(tx) = map.remove(&id) {
+        let _ = tx.send(());
+        Ok(())
+    } else {
+        Err("Stream tidak dikenali atau sudah selesai.".to_owned())
+    }
+}
+
+#[tauri::command]
+pub async fn load_model(model: String) -> Result<(), String> {
+    // POST /api/generate dengan keep_alive agar model tetap di RAM.
+    let http = client();
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": "",
+        "stream": false,
+        "keep_alive": "1h",
+    });
+    let resp = http
+        .post(format!("{OLLAMA_BASE}/api/generate"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Gagal preload model: {e}"))?;
+    let status = resp.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {status} saat preload model"))
+    }
+}
+
+#[tauri::command]
+pub async fn unload_model(model: String) -> Result<(), String> {
+    // POST /api/generate dengan keep_alive=0 untuk mengeluarkan model dari RAM.
+    let http = client();
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": "",
+        "stream": false,
+        "keep_alive": 0i32,
+    });
+    let resp = http
+        .post(format!("{OLLAMA_BASE}/api/generate"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Gagal melepaskan model: {e}"))?;
+    let status = resp.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {status} saat melepaskan model"))
+    }
+}
+
+async fn chat_worker(
+    app: tauri::AppHandle,
+    id: String,
+    payload: ChatRequest,
+    cancel: oneshot::Receiver<()>,
+) {
+    let http = client();
+
+    let req_opts = payload.options;
+    let mut body_obj = serde_json::json!({
+        "model": payload.model,
+        "messages": payload.messages,
+        "stream": true,
+        "options": serde_json::json!({
+            "num_ctx": req_opts.num_ctx,
+            "num_predict": req_opts.num_predict,
+            "temperature": req_opts.temperature,
+            "top_p": req_opts.top_p,
+            "top_k": req_opts.top_k,
+            "repeat_penalty": req_opts.repeat_penalty,
+            "stop": req_opts.stop,
+            "seed": req_opts.seed,
+        }),
+    });
+
+    // Gemma 4 mengendalikan thinking lewat token sistem `<|think|>`, bukan
+    // parameter bool `think` (catatan Phase 0). Token ini hanya dikirim bila
+    // pengguna mengaktifkan Thinking secara eksplisit.
+    if payload.think {
+        body_obj["system"] = serde_json::Value::String("<|think|>".to_owned());
+    }
+    let body = body_obj;
+
+    let result = http
+        .post(format!("{OLLAMA_BASE}/api/chat"))
+        .json(&body)
+        .send()
+        .await;
+
+    let resp = match result {
+        Ok(r) => r,
+        Err(ref e) if is_conn_refused(e) => {
+            let _ = emit_error(
+                &app,
+                &id,
+                "ERR_NOT_RUNNING",
+                "Runtime Ollama tidak berjalan. Jalankan `ollama serve` lalu coba lagi.",
+            )
+            .await;
+            return;
+        }
+        Err(e) => {
+            let _ = emit_error(&app, &id, "ERR_REQUEST", &format!("{e}")).await;
+            return;
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        let msg = extract_ollama_error(&text).unwrap_or(text);
+        let code = if status == 400 && msg.to_lowercase().contains("thinking") {
+            "ERR_THINKING_UNSUPPORTED"
+        } else {
+            "ERR_HTTP"
+        };
+        let _ = emit_error(&app, &id, code, &msg).await;
+        return;
+    }
+
+    // Stream SSE: pisahkan `data: {...}\n\n`
+    let stream = resp.bytes_stream();
+    let mut buf = Vec::new();
+    let mut last_done = false;
+
+    tokio::pin!(stream);
+    tokio::pin!(cancel);
+    // Loop dengan pembatalan: pilih antara chunk selanjutnya vs sinyal batal.
+    loop {
+        let next = tokio::select! {
+            biased;
+            _ = &mut cancel => { break; }
+            opt = stream.next() => opt,
+        };
+        match next {
+            Some(Ok(bytes)) => {
+                buf.extend_from_slice(&bytes);
+                while let Some(line) = split_line(&mut buf) {
+                    if let Some(obj) = parse_sse_line(&line) {
+                        if last_done {
+                            break;
+                        }
+                        // done marker
+                        if obj.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            last_done = true;
+                            let _ = emit_done(&app, &id, &obj).await;
+                            break;
+                        }
+                        let model = obj.get("model").and_then(|m| m.as_str()).unwrap_or("").to_owned();
+                        let msg = obj.get("message").and_then(|m| m.as_object());
+                        let content = msg
+                            .and_then(|m| m.get("content"))
+                            .and_then(|c| c.as_str())
+                            .map(str::to_owned);
+                        let thinking = msg
+                            .and_then(|m| m.get("thinking"))
+                            .and_then(|t| t.as_str())
+                            .map(str::to_owned);
+                        if content.is_none() && thinking.is_none() && obj.get("done").is_none() {
+                            continue;
+                        }
+                        let _ = app.emit(
+                            "azalea:chat_chunk",
+                            serde_json::json!({ "id": id, "model": model, "content": content, "thinking": thinking }),
+                        );
+                    }
+                }
+                if last_done {
+                    break;
+                }
+            }
+            Some(Err(e)) => {
+                let _ = emit_error(&app, &id, "ERR_STREAM", &format!("Stream putus: {e}")).await;
+                break;
+            }
+            None => {
+                // Stream selesai normal
+                break;
+            }
+        }
+    }
+
+    let _ = app.emit(
+        "azalea:chat_chunk",
+        serde_json::json!({ "id": id, "done": true }),
+    );
+}
+
+async fn emit_error(app: &tauri::AppHandle, id: &str, code: &str, message: &str) {
+    let _ = app.emit(
+        "azalea:chat_error",
+        serde_json::json!({ "id": id, "code": code, "message": message }),
+    );
+}
+
+async fn emit_done(app: &tauri::AppHandle, id: &str, obj: &serde_json::Value) {
+    let pe = obj.get("prompt_eval_count").and_then(|v| v.as_u64());
+    let ec = obj.get("eval_count").and_then(|v| v.as_u64());
+    let dur = obj.get("eval_duration_seconds").and_then(|v| v.as_f64());
+    let prompt_eval = pe.and_then(|t| {
+        dur.map(|d| PromptEval { total: t as u32, tokens_per_second: if d > 0.0 { (t as f32) / d as f32 } else { 0.0 } })
+    });
+    let eval = ec.and_then(|t| {
+        dur.map(|d| EvalStats { total: t as u32, tokens_per_second: if d > 0.0 { (t as f32) / d as f32 } else { 0.0 } })
+    });
+    let _ = app.emit(
+        "azalea:chat_done",
+        serde_json::json!({ "id": id, "prompt_eval": prompt_eval, "eval": eval }),
+    );
+}
+
+fn extract_ollama_error(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("error").cloned())
+        .and_then(|e| {
+            if e.is_string() {
+                e.as_str().map(str::to_owned)
+            } else if e.is_object() {
+                e.get("message").and_then(|m| m.as_str().map(str::to_owned))
+            } else {
+                Some(e.to_string())
+            }
+        })
+}
+
+/// Ambil `data:` JSON object dari satu baris SSE.
+fn parse_sse_line(line: &str) -> Option<serde_json::Value> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("data:") {
+        return None;
+    }
+    let payload = trimmed["data:".len()..].trim();
+    if payload.is_empty() || payload == "[DONE]" {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(payload).ok()
+}
+
+/// Potong satu baris (hingga \n termasuk) dari buffer, kembalikan isi barisannya.
+fn split_line(buf: &mut Vec<u8>) -> Option<String> {
+    let nl = buf.iter().position(|&b| b == b'\n')?;
+    let line = String::from_utf8(buf[..nl].to_vec()).ok();
+    buf.drain(..=nl);
+    line
+}

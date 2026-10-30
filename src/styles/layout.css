@@ -1,0 +1,501 @@
+/* ============ Layout: shell, latar, sidebar, kolom utama ============ */
+
+.app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ---- Lapisan latar ---- */
+.bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.bg-image {
+  position: absolute;
+  inset: -4%;
+  background: url("/assets/azalea-sunset.png") center / cover no-repeat;
+  will-change: transform;
+}
+.bg-stars {
+  position: absolute;
+  inset: 0 0 42% 0;
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+}
+.bg-stars::before,
+.bg-stars::after {
+  content: "";
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: transparent;
+  opacity: 0.55;
+}
+.bg-stars::before {
+  box-shadow:
+    4vw 6vh 0 0 rgba(255, 255, 255, 0.7),
+    11vw 14vh 0 1px rgba(228, 221, 248, 0.55),
+    18vw 4vh 0 0 rgba(255, 255, 255, 0.45),
+    26vw 18vh 0 0 rgba(255, 255, 255, 0.6),
+    33vw 9vh 0 1px rgba(228, 221, 248, 0.4),
+    41vw 3vh 0 0 rgba(255, 255, 255, 0.65),
+    48vw 12vh 0 0 rgba(255, 255, 255, 0.4),
+    55vw 7vh 0 1px rgba(228, 221, 248, 0.5),
+    63vw 2vh 0 0 rgba(255, 255, 255, 0.55),
+    70vw 15vh 0 0 rgba(255, 255, 255, 0.4),
+    77vw 5vh 0 1px rgba(228, 221, 248, 0.6),
+    84vw 11vh 0 0 rgba(255, 255, 255, 0.45),
+    91vw 8vh 0 0 rgba(255, 255, 255, 0.6),
+    96vw 16vh 0 1px rgba(228, 221, 248, 0.4),
+    8vw 24vh 0 0 rgba(255, 255, 255, 0.35),
+    22vw 28vh 0 1px rgba(228, 221, 248, 0.35),
+    44vw 22vh 0 0 rgba(255, 255, 255, 0.3),
+    58vw 26vh 0 0 rgba(255, 255, 255, 0.35),
+    74vw 21vh 0 1px rgba(228, 221, 248, 0.3),
+    88vw 25vh 0 0 rgba(255, 255, 255, 0.3);
+}
+.bg-stars::after {
+  box-shadow:
+    7vw 10vh 0 0 rgba(255, 255, 255, 0.5),
+    15vw 2vh 0 1px rgba(228, 221, 248, 0.45),
+    29vw 13vh 0 0 rgba(255, 255, 255, 0.55),
+    37vw 6vh 0 0 rgba(255, 255, 255, 0.4),
+    45vw 17vh 0 1px rgba(228, 221, 248, 0.4),
+    52vw 5vh 0 0 rgba(255, 255, 255, 0.6),
+    60vw 11vh 0 0 rgba(255, 255, 255, 0.35),
+    67vw 18vh 0 1px rgba(228, 221, 248, 0.45),
+    75vw 3vh 0 0 rgba(255, 255, 255, 0.5),
+    82vw 9vh 0 0 rgba(255, 255, 255, 0.4),
+    89vw 14vh 0 1px rgba(228, 221, 248, 0.35),
+    94vw 4vh 0 0 rgba(255, 255, 255, 0.55),
+    12vw 20vh 0 0 rgba(255, 255, 255, 0.3),
+    35vw 25vh 0 1px rgba(228, 221, 248, 0.3),
+    50vw 29vh 0 0 rgba(255, 255, 255, 0.25),
+    65vw 23vh 0 0 rgba(255, 255, 255, 0.3),
+    80vw 27vh 0 1px rgba(228, 221, 248, 0.25),
+    97vw 20vh 0 0 rgba(255, 255, 255, 0.3);
+}
+
+/* Scrim: gradien atas-bawah + vignette agar teks tetap terbaca */
+.bg-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(10, 12, 30, 0.38) 100%),
+    linear-gradient(
+      180deg,
+      rgba(10, 12, 30, 0.5) 0%,
+      rgba(10, 12, 30, 0.12) 34%,
+      rgba(10, 12, 30, 0.16) 62%,
+      rgba(10, 12, 30, 0.52) 100%
+    );
+}
+
+/* ---- Animasi latar (hanya berjalan saat .anim-allowed) ---- */
+.anim-allowed .bg-image--anim {
+  animation: bg-drift 80s ease-in-out infinite alternate;
+}
+.anim-allowed .bg-stars--anim::before {
+  animation: twinkle 6s ease-in-out infinite;
+}
+.anim-allowed .bg-stars--anim::after {
+  animation: twinkle 9s ease-in-out infinite 2.2s;
+}
+.anim-allowed .status-dot--loading {
+  animation: dot-pulse 1.6s ease-in-out infinite;
+}
+.anim-allowed .thinking-dots span {
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.anim-allowed .thinking-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.anim-allowed .thinking-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.anim-allowed .stream-caret::after {
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+@keyframes bg-drift {
+  from {
+    transform: scale(1.06) translate3d(0.6%, 0.4%, 0);
+  }
+  to {
+    transform: scale(1.14) translate3d(-1.2%, -1.6%, 0);
+  }
+}
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Orkestrasi masuk halus, hanya bila gerakan diizinkan */
+.anim-allowed .sidebar {
+  animation: slide-in-left var(--motion-slow) var(--ease-out) both;
+}
+.anim-allowed .view-fade {
+  animation: rise-in var(--motion-slow) var(--ease-out) both;
+}
+.anim-allowed .empty-state > * {
+  animation: rise-in var(--motion-slow) var(--ease-out) both;
+}
+.anim-allowed .empty-state > *:nth-child(2) {
+  animation-delay: 50ms;
+}
+.anim-allowed .empty-state > *:nth-child(3) {
+  animation-delay: 100ms;
+}
+.anim-allowed .empty-state > *:nth-child(4) {
+  animation-delay: 150ms;
+}
+.anim-allowed .panel {
+  animation: slide-in-right var(--motion-slow) var(--ease-out) both;
+}
+.anim-allowed .suggestion {
+  animation: rise-in var(--motion-slow) var(--ease-out) both;
+}
+.anim-allowed .modal {
+  animation: modal-in var(--motion-base) var(--ease-out) both;
+}
+.anim-allowed .modal-overlay {
+  animation: fade-in var(--motion-fast) var(--ease-out) both;
+}
+
+/* Cadangan: hormati preferensi sistem apa pun yang terjadi */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---- Sidebar ---- */
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(19, 24, 52, 0.5), rgba(14, 18, 40, 0.58));
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-lg)) saturate(1.4);
+  border-right: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.brand-name {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+}
+.brand-sub {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-faint);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text);
+}
+.nav-item.is-active {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--color-text);
+  border-color: var(--glass-border);
+  box-shadow: var(--glass-highlight);
+}
+.nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(180deg, var(--color-peach-300), var(--color-peach-500));
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+.runtime-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--glass-bg-soft);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight);
+}
+.runtime-card .status-dot {
+  margin-top: 4px;
+}
+.runtime-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.runtime-overline {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+.runtime-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.runtime-meta {
+  font-size: 11px;
+  color: var(--color-text-faint);
+}
+
+.version-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-faint);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.version-chip:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-dim);
+  border-color: var(--glass-border);
+}
+
+/* ---- Kolom utama ---- */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+.view-fade {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-header {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  background: linear-gradient(180deg, rgba(16, 20, 44, 0.42), rgba(16, 20, 44, 0.28));
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.3);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.3);
+  border-bottom: 1px solid var(--glass-border);
+}
+.chat-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.1px;
+}
+.header-spacer {
+  flex: 1;
+}
+
+/* ---- Panel kanan ---- */
+.panel {
+  width: var(--panel-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  overflow-y: auto;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(19, 24, 52, 0.5), rgba(14, 18, 40, 0.58));
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-lg)) saturate(1.4);
+  border-left: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight);
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  margin: 0;
+}
+.panel-head .panel-title {
+  font-size: 13px;
+  color: var(--color-text);
+  letter-spacing: 0.2px;
+  text-transform: none;
+}
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg-soft);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight);
+}
+.panel-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-faint);
+  margin: 0;
+  padding: 0 var(--space-1) var(--space-2);
+}
+.panel-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}

@@ -1,0 +1,88 @@
+/* ============ AzaleaHouse Design Tokens ============ */
+/* Palet diturunkan dari /assets/azalea-sunset.png:
+   langit biru tua, awan lavender/violet, puncak matahari peach-oranye. */
+
+:root {
+  color-scheme: dark;
+
+  /* -- Warna dasar (langit) -- */
+  --color-ink-950: #0d1128;
+  --color-ink-900: #131838;
+  --color-ink-800: #1b2148;
+  --color-ink-700: #262e5c;
+  --color-ink-600: #333c6e;
+
+  /* -- Aksen dari awan & matahari -- */
+  --color-lavender-200: #e4ddf8;
+  --color-lavender-300: #cfc5f0;
+  --color-lavender-400: #b2a5e4;
+  --color-violet-500: #8a76d6;
+  --color-violet-600: #6f5cc0;
+  --color-peach-200: #ffe3cc;
+  --color-peach-300: #ffcf9e;
+  --color-peach-400: #ffb27a;
+  --color-peach-500: #ff9a5c;
+  --color-mint-400: #8fd6b2;
+  --color-rose-400: #f2889b;
+  --color-amber-400: #f5c06b;
+
+  /* -- Teks -- */
+  --color-text: #f2eff8;
+  --color-text-dim: #bcb4d6;
+  --color-text-faint: #948cab;
+  --color-text-on-accent: #33203a;
+
+  /* -- Kaca (glass) -- */
+  --glass-bg: rgba(21, 26, 56, 0.44);
+  --glass-bg-strong: rgba(17, 21, 47, 0.66);
+  --glass-bg-soft: rgba(28, 34, 68, 0.32);
+  --glass-border: rgba(255, 255, 255, 0.13);
+  --glass-border-strong: rgba(255, 255, 255, 0.22);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --user-bubble-bg: rgba(255, 158, 100, 0.16);
+  --user-bubble-border: rgba(255, 186, 140, 0.32);
+
+  /* -- Spasi (skala 4/8) -- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* -- Radius -- */
+  --radius-xs: 6px;
+  --radius-sm: 9px;
+  --radius-md: 13px;
+  --radius-lg: 17px;
+  --radius-xl: 22px;
+  --radius-full: 999px;
+
+  /* -- Blur (dikendalikan pengaturan intensitas) -- */
+  --blur-scale: 1;
+  --blur-sm: calc(8px * var(--blur-scale));
+  --blur-md: calc(16px * var(--blur-scale));
+  --blur-lg: calc(26px * var(--blur-scale));
+
+  /* -- Elevasi berlapis -- */
+  --shadow-1: 0 1px 2px rgba(8, 10, 28, 0.2), 0 2px 10px rgba(8, 10, 28, 0.14);
+  --shadow-2: 0 2px 6px rgba(8, 10, 28, 0.22), 0 12px 32px rgba(8, 10, 28, 0.24);
+  --shadow-3: 0 6px 16px rgba(8, 10, 28, 0.3), 0 24px 64px rgba(8, 10, 28, 0.36);
+
+  /* -- Gerak -- */
+  --motion-fast: 160ms;
+  --motion-base: 210ms;
+  --motion-slow: 260ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* -- Tipografi (system stack, tanpa webfont) -- */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+
+  /* -- Dimensi shell -- */
+  --sidebar-w: 264px;
+  --panel-w: 320px;
+}
