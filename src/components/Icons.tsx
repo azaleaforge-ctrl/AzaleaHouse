@@ -235,6 +235,16 @@ export function IconTrash({ size = 20, className }: IconProps) {
   );
 }
 
+/** Ikon peringatan untuk error boundary */
+export function IconAlertCircle({ size = 20, className }: IconProps) {
+  return (
+    <svg {...svgProps(size, className)}>
+      <path d="M10.28 4.93a9 9 0 1 1-6.25 0 9 9 0 0 1 6.25-4.93 9 9 0 0 1 0 9.87z" />
+      <path d="M12 8v4M12 16h.01" />
+    </svg>
+  );
+}
+
 /** Logo bunga azalea — lima kelopak, palet senja */
 export function LogoMark({ size = 26, className }: IconProps) {
   const petals = ["#ffb27a", "#c9b9f2", "#ff9a5c", "#b2a5e4", "#ffd2ae"];

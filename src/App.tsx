@@ -45,6 +45,7 @@ import {
   invokeUnloadModel,
   listenChatEvents,
 } from "./lib/tauri";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackgroundLayer } from "./components/BackgroundLayer";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
@@ -751,10 +752,11 @@ export default function App() {
   const rootClass = "app" + (animAllowed ? " anim-allowed" : "");
 
   return (
-    <div className={rootClass} style={{ "--blur-scale": String(blurScale) } as React.CSSProperties}>
-      <BackgroundLayer animated={animAllowed} />
+    <ErrorBoundary>
+      <div className={rootClass} style={{ "--blur-scale": String(blurScale) } as React.CSSProperties}>
+        <BackgroundLayer animated={animAllowed} />
 
-      <Sidebar
+        <Sidebar
         view={view}
         onNavigate={setView}
         onNewChat={newChat}
@@ -861,6 +863,7 @@ export default function App() {
         onCancelDownload={cancelDownload}
         onApply={applyUpdate}
       />
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }
