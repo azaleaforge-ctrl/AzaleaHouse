@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-30  
 **Branch:** `fix/phase-3-stream-timeouts-cancellation`  
-**Status:** Implementation prepared; Windows CI validation pending.
+**Status:** Merged after Windows CI passed; manual Ollama runtime checks remain unverified.
 
 ## Scope
 
@@ -43,7 +43,7 @@ These results must be checked for the current branch head before merging. The wo
 ## Validation result
 
 - Static source review: performed.
-- Windows CI: to be recorded after the current head's run completes.
+- Windows CI: passed for PR #5 head `368b8a2619c0ac246f7527b48efc0a07e2de1d2a` (frontend build, Rust compile, Rust tests).
 - Interactive runtime checks against Ollama: require a Windows desktop runtime and a running local Ollama instance; these are not simulated by the source edits alone.
 - No GitHub Release, tag, installer upload, or version change was created.
 

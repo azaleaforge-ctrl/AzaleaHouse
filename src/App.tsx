@@ -53,6 +53,12 @@ import { VersionCenter } from "./components/VersionCenter";
 import { ComingSoon } from "./components/ComingSoon";
 import { IconFile, IconImage } from "./components/Icons";
 
+function formatConversationTimestamp(value: string): string {
+  const date = new Date(value);
+  if (!value.includes("T") || Number.isNaN(date.getTime())) return value;
+  return `${date.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })} · ${date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
@@ -159,6 +165,26 @@ export default function App() {
   const keepaliveTimerRef = useRef<number | null>(null);
   const lastActivityRef = useRef(0);
   const memoryReadyRef = useRef(false);
+  const activeConversationRef = useRef<string | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const persistenceTimerRef = useRef<number | null>(null);
+  const skipNextPersistenceRef = useRef(false);
+
+  const setActiveConversationId = useCallback((id: string | null) => {
+    activeConversationRef.current = id;
+    setActiveConversation(id);
+  }, []);
+
+  const refreshHistory = useCallback(async () => {
+    const list = await invokeListConversations();
+    setHistory(list.map((conversation) => ({
+      id: conversation.id,
+      role: "user" as const,
+      text: conversation.title,
+      time: formatConversationTimestamp(conversation.updated_at),
+    })));
+    return list;
+  }, []);
 
   // Versi aplikasi dari Tauri bila tersedia
   useEffect(() => {
@@ -185,55 +211,86 @@ export default function App() {
     messagesRef.current = messages;
   }, [messages]);
 
-  // ── Initialize memory dir + load saved settings + restore session ──
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
+
+  // ── Initialize local storage, settings, history, and the last conversation ──
   useEffect(() => {
     let alive = true;
-    // Ensure .AzaleaMemory exists
-    invokeEnsureMemoryDir().then(() => {
-      if (alive) memoryReadyRef.current = true;
-    });
 
-    // Load memory path
-    invokeMemoryPath().then((p) => {
-      if (alive && p) setMemoryPath(p);
-    });
+    const initialize = async () => {
+      // Ensure the conversation directory exists before listing it.
+      const memoryReady = await invokeEnsureMemoryDir();
+      if (!alive) return;
+      memoryReadyRef.current = memoryReady;
 
-    // Load saved settings
-    invokeLoadSettings().then((saved) => {
-      if (alive && saved) {
+      const path = await invokeMemoryPath();
+      if (!alive) return;
+      if (path) setMemoryPath(path);
+
+      const [saved, list] = await Promise.all([
+        invokeLoadSettings(),
+        invokeListConversations(),
+      ]);
+      if (!alive) return;
+
+      if (saved) {
         if (saved.appearance) {
-          setSettings((s) => ({ ...s, appearance: { ...s.appearance, ...(saved.appearance as Record<string, unknown>) } }));
+          setSettings((current) => ({
+            ...current,
+            appearance: {
+              ...current.appearance,
+              ...(saved.appearance as Record<string, unknown>),
+            },
+          }));
         }
         if (saved.ai) {
           const savedAi = { ...(saved.ai as Record<string, unknown>) };
           if (savedAi.model !== "gemma4:e2b") savedAi.model = DEFAULT_SETTINGS.ai.model;
-          setSettings((s) => ({ ...s, ai: { ...s.ai, ...savedAi } }));
+          setSettings((current) => ({
+            ...current,
+            ai: { ...current.ai, ...savedAi },
+          }));
         }
       }
+
+      setHistory(list.map((conversation) => ({
+        id: conversation.id,
+        role: "user" as const,
+        text: conversation.title,
+        time: formatConversationTimestamp(conversation.updated_at),
+      })));
+
+      const latest = list[0];
+      if (!latest) return;
+      const conversation = await invokeLoadConversation(latest.id);
+      if (!alive || !conversation) return;
+
+      // Restoration is not new activity; keep the saved timestamp unchanged.
+      skipNextPersistenceRef.current = true;
+      setActiveConversationId(conversation.id);
+      setMessages(conversation.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        time: message.time,
+        streaming: false,
+      })));
+    };
+
+    void initialize().catch(() => {
+      if (alive) setChatError("Gagal memulihkan penyimpanan lokal. Data percakapan lama tidak dihapus.");
     });
 
-    // Phase 6: Restore last session
-    invokeListConversations().then((list) => {
-      if (!alive || list.length === 0) return;
-      // Get the most recently updated conversation
-      const last = list[0];
-      if (!last) return;
-      invokeLoadConversation(last.id).then((conv) => {
-        if (alive && conv) {
-          setActiveConversation(conv.id);
-          setMessages(
-            conv.messages.map((m) => ({
-              id: m.id,
-              role: m.role,
-              text: m.text,
-              time: m.time,
-              streaming: false,
-            }))
-          );
-        }
-      });
-    });
-  }, []);
+    return () => {
+      alive = false;
+      if (persistenceTimerRef.current !== null) {
+        window.clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+      }
+    };
+  }, [setActiveConversationId]);
 
   // ── Fetch runtime status on mount & model change ──
   useEffect(() => {
@@ -314,7 +371,6 @@ export default function App() {
           setGenState("idle");
           setStreamIdRef(null);
           finishStream();
-          void persistConversation();
           return;
         }
 
@@ -396,26 +452,69 @@ export default function App() {
     return t.length > 50 ? t.slice(0, 50) + "..." : t;
   }
 
-  /// Persist current messages to .AzaleaMemory.
-  async function persistConversation() {
-    if (!memoryReadyRef.current) return;
-    const convId = activeConversation ?? uid();
-    if (!activeConversation) setActiveConversation(convId);
-    const stored: { id: string; title: string; updated_at: string; messages: StoredMessage[] } = {
-      id: convId,
-      title: titleFromMessages(messagesRef.current),
-      updated_at: clockNow(),
-      messages: messagesRef.current.map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        time: m.time,
+  /// Persist a snapshot to the current conversation ID. The queue prevents an older
+  /// async write from finishing after and overwriting a newer snapshot.
+  const persistConversation = useCallback(async (): Promise<boolean> => {
+    if (!memoryReadyRef.current) return false;
+
+    const currentMessages = messagesRef.current;
+    if (currentMessages.length === 0) return true;
+
+    let conversationId = activeConversationRef.current;
+    if (!conversationId) {
+      conversationId = uid();
+      setActiveConversationId(conversationId);
+    }
+
+    const snapshot = {
+      id: conversationId,
+      title: titleFromMessages(currentMessages),
+      updated_at: new Date().toISOString(),
+      messages: currentMessages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        time: message.time,
       })),
     };
-    await invokeSaveConversation(stored);
-    // Refresh list (future: display in history view)
-    void invokeListConversations();
-  }
+
+    const write = saveQueueRef.current.then(async () => {
+      const saved = await invokeSaveConversation(snapshot);
+      if (!saved) {
+        setChatError("Percakapan belum berhasil disimpan ke .AzaleaMemory. Periksa izin folder penyimpanan.");
+        return false;
+      }
+      await refreshHistory();
+      return true;
+    });
+    saveQueueRef.current = write.then(() => undefined, () => undefined);
+    return write;
+  }, [refreshHistory, setActiveConversationId]);
+
+  // Debounced autosave. messagesRef is updated by the effect above before this effect runs.
+  useEffect(() => {
+    if (!memoryReadyRef.current || messages.length === 0) return;
+
+    if (skipNextPersistenceRef.current) {
+      skipNextPersistenceRef.current = false;
+      return;
+    }
+
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+    }
+    persistenceTimerRef.current = window.setTimeout(() => {
+      persistenceTimerRef.current = null;
+      void persistConversation();
+    }, 450);
+
+    return () => {
+      if (persistenceTimerRef.current !== null) {
+        window.clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+      }
+    };
+  }, [messages, persistConversation]);
 
   /// Save settings whenever they change (debounced via useEffect).
   useEffect(() => {
@@ -684,48 +783,72 @@ export default function App() {
       cancelledStreamIdsRef.current.set(streamIdRef.current, false);
       void invokeChatCancel(streamIdRef.current);
     }
-    // Save current conversation before clearing
+    // Flush the current snapshot before switching to an independent empty session.
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    }
     void persistConversation();
     setGenState("idle");
     setStreamIdRef(null);
     streamingMsgIdRef.current = null;
-    setActiveConversation(uid());
+    setActiveConversationId(uid());
     setMessages([]);
     setAttachments([]);
     setView("chat");
-  }, []);
+  }, [persistConversation, setActiveConversationId]);
 
-  // ── Load conversation from history (Phase 6) ──
+  // ── Load conversation from history ──
   const openConversation = useCallback(async (id: string) => {
-    const conv = await invokeLoadConversation(id);
-    if (conv) {
-      setActiveConversation(conv.id);
-      setMessages(
-        conv.messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          text: m.text,
-          time: m.time,
-          streaming: false,
-        }))
-      );
-      setAttachments([]);
-      setChatError(null);
-      setView("chat");
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
     }
-  }, []);
+    await persistConversation();
 
-  // ── Delete conversation from history (Phase 6) ──
-  const deleteConversation = useCallback(async (id: string) => {
-    await invokeDeleteConversation(id);
-    const list = await invokeListConversations();
-    setHistory(list.map((c) => ({
-      id: c.id,
-      role: "user" as const,
-      text: c.title,
-      time: c.updated_at,
+    const conversation = await invokeLoadConversation(id);
+    if (!conversation) {
+      setChatError("Percakapan tidak dapat dibuka. File mungkin sudah dipindahkan atau rusak.");
+      return;
+    }
+
+    skipNextPersistenceRef.current = true;
+    setActiveConversationId(conversation.id);
+    setMessages(conversation.messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      text: message.text,
+      time: message.time,
+      streaming: false,
     })));
-  }, []);
+    setAttachments([]);
+    setChatError(null);
+    setView("chat");
+  }, [persistConversation, setActiveConversationId]);
+
+  // ── Delete a conversation and refresh the persistent history list ──
+  const deleteConversation = useCallback(async (id: string) => {
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    }
+    if (activeConversationRef.current === id) {
+      await persistConversation();
+    }
+
+    const deleted = await invokeDeleteConversation(id);
+    if (!deleted) {
+      setChatError("Percakapan tidak berhasil dihapus dari penyimpanan lokal.");
+      return;
+    }
+
+    if (activeConversationRef.current === id) {
+      setActiveConversationId(null);
+      setMessages([]);
+      setAttachments([]);
+    }
+    await refreshHistory();
+  }, [persistConversation, refreshHistory, setActiveConversationId]);
 
   const model = models.find((m) => m.id === settings.ai.model) ?? models[0];
 
