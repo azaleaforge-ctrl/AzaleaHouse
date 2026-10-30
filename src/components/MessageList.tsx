@@ -13,7 +13,6 @@ function MessageBubble({
   onRegenerate: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const [showThinking, setShowThinking] = useState(false);
   const copyTimer = useRef<number | null>(null);
 
   useEffect(
@@ -35,7 +34,6 @@ function MessageBubble({
   };
 
   const displayContent = msg.streaming ? msg.text : msg.text;
-  const thinkingContent = msg.thinking;
 
   return (
     <article className={"msg msg--" + msg.role}>
@@ -43,23 +41,6 @@ function MessageBubble({
         <span className="msg-author">{msg.role === "assistant" ? "AzaleaHouse" : "Anda"}</span>
         <span className="msg-time">{msg.time}</span>
       </div>
-      {thinkingContent ? (
-        <div className="thinking-section">
-          <button
-            type="button"
-            className="thinking-toggle"
-            onClick={() => setShowThinking(!showThinking)}
-            aria-expanded={showThinking}
-          >
-            <span className="thinking-toggle-label">
-              {showThinking ? "▼ Sembunyikan chain-of-thought" : "▶️ Lihat chain-of-thought"}
-            </span>
-          </button>
-          {showThinking ? (
-            <pre className="thinking-content">{thinkingContent}</pre>
-          ) : null}
-        </div>
-      ) : null}
       <div
         className={"bubble md" + (msg.streaming ? " is-streaming" : "")}
         dangerouslySetInnerHTML={{ __html: renderMarkdown(displayContent) }}
