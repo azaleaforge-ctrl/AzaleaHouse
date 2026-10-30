@@ -55,8 +55,11 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - This version change is source/configuration metadata only. It does **not** create a `v0.1.1` tag, GitHub Release, installer upload, or production update.
 - Keep the release freeze in place until the planned repairs and Windows acceptance tests pass and the owner separately authorizes publication.
 
-## Non-negotiables already encoded in the shell
-- No shell/exec command is exposed to the frontend; the only external process probe is `where ollama` (path detection only, no execution).
-- Version Center in Phase 1 is preview-only: no network call, no download, no install.
-- UI version is read from `tauri.conf.json` via `app_version`, so installer and UI cannot drift.
-- Thinking controlled via `<|think|>` system token (Ollama), not a boolean `think` parameter.
+## Security and behavior boundaries
+
+- The frontend does not provide arbitrary shell text for execution. The storage repair uses fixed Windows dialog/probe invocations only.
+- Path-based read/encode/save attachment commands are intentionally not registered in Tauri IPC until the user-selected-file grant flow is implemented. The current UI only reads files selected through its WebView file input.
+- The memory migration command consumes a one-time canonical folder selection produced by the native folder picker; it rejects a caller-supplied different destination.
+- Manual installer download is constrained to the configured GitHub repository. Installer execution remains disabled until signed artifacts and the official Tauri updater verification are configured.
+- UI version is read from `tauri.conf.json` via `app_version`, so app-version display follows the Tauri package configuration.
+- Gemma 4 Thinking is controlled through the `<|think|>` system token for the validated Ollama path; this remains model/runtime-specific.
