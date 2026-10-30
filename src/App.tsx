@@ -34,6 +34,8 @@ import {
   invokeLoadConversation,
   invokeDeleteConversation,
   invokeOpenMemoryFolder,
+  invokePickMemoryParentFolder,
+  invokeSetCustomPath,
   invokeBackupMemory,
   invokeCheckUpdate,
   invokeDownloadUpdate,
@@ -96,6 +98,7 @@ export default function App() {
   const [systemReduced, setSystemReduced] = useState(false);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [memoryPath, setMemoryPath] = useState<string | null>(null);
+  const [memoryNotice, setMemoryNotice] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
@@ -1075,21 +1078,37 @@ export default function App() {
     }
   }, [genState, runtimeStatus, settings.ai.model]);
 
-  // ── Memory operations (Fase 4) ──
-  const openMemoryFolder = useCallback(() => {
-    void invokeOpenMemoryFolder();
+  // ── Memory operations (Phase 1 hardening / Phase 4 storage) ──
+  const openMemoryFolder = useCallback(async () => {
+    const opened = await invokeOpenMemoryFolder();
+    setMemoryNotice(opened
+      ? "Folder memori dibuka di File Explorer."
+      : "Folder memori tidak dapat dibuka. Periksa lokasi penyimpanan.");
   }, []);
 
   const changeMemoryPath = useCallback(async () => {
-    // Di MVP, gunakan dialog folder native via Rust set_custom_path.
-    // Frontend tidak bisa membuka dialog folder; Rust akan menangani via
-    // invoke as part of migration flow in a future iteration.
-    const newPath = memoryPath; // placeholder — dialog akan ditambahkan
-    void newPath;
-  }, [memoryPath]);
+    try {
+      const selectedParent = await invokePickMemoryParentFolder();
+      if (!selectedParent) return;
+      setMemoryNotice("Memvalidasi lokasi dan menyalin data memori...");
+      await invokeSetCustomPath(selectedParent);
+      const activePath = await invokeMemoryPath();
+      if (!activePath) throw new Error("Lokasi memori aktif tidak dapat dibaca setelah migrasi.");
+      setMemoryPath(activePath);
+      setMemoryNotice(`Lokasi memori berhasil dipindahkan ke ${activePath}. Data sumber lama tidak dihapus.`);
+    } catch (error) {
+      setMemoryNotice(`Gagal memindahkan lokasi memori: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, []);
 
-  const backupMemory = useCallback(() => {
-    void invokeBackupMemory();
+  const backupMemory = useCallback(async () => {
+    try {
+      const backupPath = await invokeBackupMemory();
+      if (!backupPath) throw new Error("Lokasi cadangan tidak dikembalikan oleh backend.");
+      setMemoryNotice(`Cadangan memori dibuat di: ${backupPath}`);
+    } catch (error) {
+      setMemoryNotice(`Gagal membuat cadangan memori: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }, []);
 
   // ── Update operations (Phase 7) ──
@@ -1198,6 +1217,7 @@ export default function App() {
               onUnloadModel={unloadModel}
               modelBusy={genState === "generating" || runtimeStatus === "unloading"}
               memoryPath={memoryPath}
+              memoryNotice={memoryNotice}
               onOpenMemoryFolder={openMemoryFolder}
               onChangeMemoryPath={changeMemoryPath}
               onBackupMemory={backupMemory}
