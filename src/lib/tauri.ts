@@ -148,7 +148,6 @@ export interface StoredMessage {
   role: "user" | "assistant";
   text: string;
   time: string;
-  thinking?: string;
 }
 
 /** Dapatkan path .AzaleaMemory yang sedang dipakai. */
