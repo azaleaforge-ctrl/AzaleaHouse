@@ -40,7 +40,6 @@ import {
   invokeCheckUpdate,
   invokeDownloadUpdate,
   invokeCancelDownload,
-  invokeApplyUpdate,
   listenUpdateProgress,
   invokeUnloadModel,
   listenChatEvents,
@@ -727,15 +726,6 @@ export default function App() {
     setUpdateStatus("idle");
   }, []);
 
-  const applyUpdate = useCallback(async () => {
-    if (downloadProgress && updateInfo && updateInfo.assets.length > 0) {
-      const asset = updateInfo.assets[0];
-      if (asset) {
-        await invokeApplyUpdate(asset.name);
-      }
-    }
-  }, [updateInfo, downloadProgress]);
-
   // Listen for download progress events
   useEffect(() => {
     const cleanup = listenUpdateProgress((e) => {
@@ -861,7 +851,6 @@ export default function App() {
         onCheck={checkForUpdate}
         onDownload={downloadUpdate}
         onCancelDownload={cancelDownload}
-        onApply={applyUpdate}
       />
       </div>
     </ErrorBoundary>

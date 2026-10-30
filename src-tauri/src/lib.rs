@@ -48,7 +48,6 @@ pub fn run() {
             updater::check_update,
             updater::download_update,
             updater::cancel_download,
-            updater::apply_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AzaleaHouse");

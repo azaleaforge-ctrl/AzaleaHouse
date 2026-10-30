@@ -23,7 +23,7 @@ Unconfirmed items stay marked **provisional** until the user approves them.
 | T-06 | Local model runtime | Ollama v0.40.13 + Gemma 4 E2B (validated) | model compatibility already tested |
 | T-07 | Model | Gemma 4 E2B multimodal — validated via direct HTTP | thinking via `<|think|>` system token, not `think` bool |
 | T-08 | GitHub release owner/repo | `azaleaforge-ctrl/AzaleaHouse` (user-provided) | update endpoint finalized |
-| T-09 | Updater signing key | **not generated** | Phase 7 blocked on signature verification |
+| T-09 | Updater signing key | **not generated**; unsigned installer execution removed by Phase 1 security containment | Phase 7 remains blocked until official Tauri signature verification is configured |
 
 ## Phase status
 | Phase | State | Evidence |
@@ -35,7 +35,7 @@ Unconfirmed items stay marked **provisional** until the user approves them.
 | 4 — Local Storage & `.AzaleaMemory` | **complete** | Rust `fs.rs` module (9 commands), conversation + settings persistence, directory verified |
 | 5 — File Reader & Vision | **complete** | Rust `fs.rs` file ops (6 commands), frontend types + hooks, Composer file picker, ChatView attachment chips, base64 image encoding for vision |
 | 6 — History & Session Restore | **complete** | On startup: load conversation list, auto-restore last session, load saved settings. HistoryView component with open/delete. Session restore logic in App.tsx mount useEffect |
-| 7 — Version Center & Manual Updater | **complete** | `azaleaforge-ctrl/AzaleaHouse` repo wired in; Rust `updater.rs` (4 commands: check/download/cancel/apply), GitHub API check, streaming download with progress events, real VersionCenter UI replaces preview, auto-check on mount, update settings in SettingsScreen |
+| 7 — Version Center & Manual Updater | **partial / blocked** | GitHub metadata check and allow-listed manual download exist; Phase 1 containment removes the unsigned installer-launch command. Official Tauri updater plugin, public verification key, signed `latest.json`, and install/restart flow are not configured or validated |
 | 8 — Quality & Packaging | **complete** | CSP set, ErrorBoundary added, NSIS config, accessibility audit, bundle 42 modules + 282 kB JS |
 
 ## Phase 2 technical notes

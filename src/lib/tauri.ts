@@ -476,18 +476,6 @@ export async function invokeCancelDownload(): Promise<boolean> {
   }
 }
 
-/** Luncurkan installer (manual user action — restart app). */
-export async function invokeApplyUpdate(path: string): Promise<boolean> {
-  if (!isTauri()) return false;
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("apply_update", { path });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Listener untuk progres download update. */
 export function listenUpdateProgress(
   onProgress: (e: UpdateProgressEvent) => void,
