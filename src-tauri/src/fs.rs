@@ -28,6 +28,15 @@ const SCHEMA_VERSION: u32 = 1;
 /// Struktur folder standar di dalam `.AzaleaMemory`.
 const SUBDIRS: &[&str] = &["profile", "conversations", "memories", "indexes", "attachments", "backups", "cache", "metadata"];
 
+/// Conversation IDs become filenames; accept only a conservative slug alphabet.
+fn is_safe_conversation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 /// Payload untuk menyimpan satu percakapan.
 #[derive(Serialize, Deserialize)]
 pub struct ConversationRecord {
@@ -119,6 +128,9 @@ pub async fn save_conversation(
     _app: tauri::AppHandle,
     conversation: ConversationRecord,
 ) -> Result<(), String> {
+    if !is_safe_conversation_id(&conversation.id) {
+        return Err("ID percakapan tidak valid".to_string());
+    }
     let base = resolve_memory_path().await;
     let dir = base.join("conversations");
     fs::create_dir_all(&dir)
@@ -178,14 +190,28 @@ pub async fn list_conversations(_app: tauri::AppHandle) -> Result<Vec<Conversati
         }
     }
 
-    // Urutkan terbaru di atas
-    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    // New ISO timestamps sort lexicographically. Prefer them to legacy HH:mm-only
+    // records, whose missing date makes an accurate cross-day sort impossible.
+    summaries.sort_by(|a, b| {
+        let a_has_date = a.updated_at.len() >= 19
+            && a.updated_at.as_bytes().get(4) == Some(&b'-')
+            && a.updated_at.contains('T');
+        let b_has_date = b.updated_at.len() >= 19
+            && b.updated_at.as_bytes().get(4) == Some(&b'-')
+            && b.updated_at.contains('T');
+        b_has_date
+            .cmp(&a_has_date)
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+    });
     Ok(summaries)
 }
 
 /// Load satu percakapan lengkap berdasarkan ID.
 #[tauri::command]
 pub async fn load_conversation(_app: tauri::AppHandle, id: String) -> Result<ConversationRecord, String> {
+    if !is_safe_conversation_id(&id) {
+        return Err("ID percakapan tidak valid".to_string());
+    }
     let base = resolve_memory_path().await;
     let path = base.join("conversations").join(format!("{id}.json"));
     if !path.exists() {
@@ -252,6 +278,9 @@ pub async fn load_settings(_app: tauri::AppHandle) -> Result<serde_json::Value, 
 /// Hapus satu percakapan.
 #[tauri::command]
 pub async fn delete_conversation(_app: tauri::AppHandle, id: String) -> Result<(), String> {
+    if !is_safe_conversation_id(&id) {
+        return Err("ID percakapan tidak valid".to_string());
+    }
     let base = resolve_memory_path().await;
     let path = base.join("conversations").join(format!("{id}.json"));
     if path.exists() {
@@ -654,4 +683,25 @@ fn base64_encode(data: &[u8]) -> String {
         }
     }
     out
+}
+
+
+#[cfg(test)]
+mod conversation_storage_tests {
+    use super::is_safe_conversation_id;
+
+    #[test]
+    fn accepts_app_generated_session_ids() {
+        assert!(is_safe_conversation_id("msg-mh7abc-12"));
+        assert!(is_safe_conversation_id("conversation_20261030"));
+    }
+
+    #[test]
+    fn rejects_path_traversal_and_invalid_ids() {
+        assert!(!is_safe_conversation_id(""));
+        assert!(!is_safe_conversation_id("../settings"));
+        assert!(!is_safe_conversation_id("folder\\\\file"));
+        assert!(!is_safe_conversation_id("id with spaces"));
+        assert!(!is_safe_conversation_id(&"a".repeat(129)));
+    }
 }
