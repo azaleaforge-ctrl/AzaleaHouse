@@ -24,6 +24,7 @@ export function ChatView({
   onTogglePanel,
   onNewChat,
   onSend,
+  onClearAttachments,
   onStop,
   onRegenerate,
   thinking,
@@ -45,7 +46,8 @@ export function ChatView({
   panelOpen: boolean;
   onTogglePanel: () => void;
   onNewChat: () => void;
-  onSend: (text: string, attachments: Attachment[]) => boolean;
+  onSend: (text: string, attachments: Attachment[]) => Promise<boolean>;
+  onClearAttachments: () => void;
   onStop: () => void;
   onRegenerate: () => void;
   thinking: boolean;
@@ -63,10 +65,14 @@ export function ChatView({
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const send = () => {
+  const send = async () => {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
-    if (onSend(text, attachments)) setDraft("");
+    const accepted = await onSend(text, attachments);
+    if (accepted) {
+      setDraft("");
+      onClearAttachments();
+    }
   };
 
   const applySuggestion = (prompt: string) => {
