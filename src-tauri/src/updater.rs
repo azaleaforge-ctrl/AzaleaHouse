@@ -1,40 +1,24 @@
-//! AzaleaHouse → Version Center & Manual Updater (Phase 7).
-//!
-//! Operasi terbatas: cek rilis GitHub, unduh asset secara manual (user trigger),
-//! emit progres via event, simpan file ke folder cache.
-//! Tidak ada auto-download, tidak ada auto-install. Semua ada di tangan user.
-//!
-//! Komponen ini menggunakan GitHub REST API yang sudah ada, bukan Tauri updater
-//! plugin — karena kami butuh kontrol penuh atas UI/UX (bukan silent background update).
-//! Signature verification bisa ditambahkan di iterasi selanjutnya (butuh signing key).
-//!
-//! Commands:
-//!   - `check_update`     : fetch latest GitHub release, return metadata.
-//!   - `download_update`  : download asset ke `.AzaleaMemory/cache/`, emit progres.
-//!   - `cancel_download`  : cancel ongoing download via token.
-//!   - `apply_update`     : launch installer exe (manual user action).
+//! Temporary hardened manual-download bridge.
+//! This module is not an authenticated updater yet: installer execution is intentionally absent.
+//! Replace this bridge with the official Tauri updater plugin after a signing key is generated.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-/// Konfigurasi GitHub — bisa override via env var GITHUB_REPO, default ke repo resmi.
-fn github_repo() -> String {
-    std::env::var("GITHUB_REPO")
-        .unwrap_or_else(|_| "azaleaforge-ctrl/AzaleaHouse".to_string())
-}
-
+const GITHUB_OWNER: &str = "azaleaforge-ctrl";
+const GITHUB_REPO_NAME: &str = "AzaleaHouse";
 const GITHUB_API: &str = "https://api.github.com/repos";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_INSTALLER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-/// Token pembatal download (shared state).
 pub struct DownloadToken(pub Arc<AtomicBool>);
 
 impl Default for DownloadToken {
@@ -46,9 +30,12 @@ impl Default for DownloadToken {
 #[derive(Deserialize)]
 struct GitHubRelease {
     tag_name: String,
+    #[serde(default)]
     #[allow(dead_code)]
     published_at: String,
+    #[serde(default)]
     body: String,
+    #[serde(default)]
     assets: Vec<GitHubAsset>,
 }
 
@@ -59,7 +46,6 @@ struct GitHubAsset {
     size: u64,
 }
 
-/// Payload balasan cek update.
 #[derive(Serialize)]
 pub struct UpdateInfo {
     pub available: bool,
@@ -77,75 +63,121 @@ pub struct UpdateAsset {
     pub size: u64,
 }
 
-/// Event progres download yang di-emit ke frontend.
 #[derive(Serialize, Clone)]
 pub struct UpdateProgress {
     pub downloaded: u64,
     pub total: u64,
-    pub speed: u64, // bytes/s
+    pub speed: u64,
     pub eta_seconds: Option<u64>,
 }
 
-/// Cek rilis terbaru dari GitHub API.
-#[tauri::command]
-pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
-    let repo = github_repo();
-    if repo == "owner/repo-placeholder" {
-        return Ok(UpdateInfo {
-            available: false,
-            current_version: app.package_info().version.to_string(),
-            latest_version: app.package_info().version.to_string(),
-            body: "Hubungkan repo GitHub di settings.".to_string(),
-            assets: vec![],
-            error: Some("GitHub repo belum dikonfigurasi. Hubungi pengembang.".to_string()),
-        });
+/// Only accept installer assets served from the release-download path of the fixed repo.
+fn parse_official_installer_url(value: &str) -> Result<Url, String> {
+    let url = Url::parse(value).map_err(|_| "URL installer tidak valid".to_string())?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Sumber update ditolak: hanya HTTPS GitHub resmi yang diizinkan".into());
     }
 
+    let segments: Vec<&str> = url
+        .path_segments()
+        .ok_or_else(|| "Path URL installer tidak valid".to_string())?
+        .collect();
+    if segments.len() != 6
+        || segments[0] != GITHUB_OWNER
+        || segments[1] != GITHUB_REPO_NAME
+        || segments[2] != "releases"
+        || segments[3] != "download"
+        || !is_safe_release_tag(segments[4])
+        || !is_safe_installer_name(segments[5])
+    {
+        return Err("Sumber update ditolak: path bukan installer resmi AzaleaHouse".into());
+    }
+    Ok(url)
+}
+
+fn is_safe_release_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= 100
+        && tag != "."
+        && tag != ".."
+        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+fn is_safe_installer_name(name: &str) -> bool {
+    name.len() <= 180
+        && name.starts_with("AzaleaHouse_")
+        && name.ends_with(".exe")
+        && name != "AzaleaHouse_.exe"
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+#[tauri::command]
+pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let client = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .user_agent("AzaleaHouse/0.1")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
-    let url = format!("{GITHUB_API}/{repo}/releases/latest");
+    let url = format!("{GITHUB_API}/{GITHUB_OWNER}/{GITHUB_REPO_NAME}/releases/latest");
     let resp = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("Request gagal: {e}"))?;
+        .map_err(|e| format!("Request GitHub gagal: {e}"))?;
 
     let status = resp.status();
     let current = app.package_info().version.to_string();
-
-    if status.as_u16() == 404 || status.as_u16() == 403 || status.as_u16() == 401 {
+    if !status.is_success() {
+        let message = match status.as_u16() {
+            404 => "Belum ada GitHub Release terbaru yang dapat diperiksa.".to_string(),
+            403 => "GitHub API membatasi permintaan. Coba lagi nanti.".to_string(),
+            401 => "GitHub menolak autentikasi permintaan.".to_string(),
+            code => format!("GitHub API mengembalikan HTTP {code}."),
+        };
         return Ok(UpdateInfo {
             available: false,
             current_version: current.clone(),
             latest_version: current,
             body: String::new(),
             assets: vec![],
-            error: Some(format!("Akses release gagal (HTTP {}). Periksa repo + token.", status.as_u16())),
+            error: Some(message),
         });
     }
 
     let release: GitHubRelease = resp
         .json()
         .await
-        .map_err(|e| format!("Parse JSON: {e}"))?;
-
+        .map_err(|e| format!("Respons GitHub bukan metadata rilis yang valid: {e}"))?;
     let latest = release.tag_name.trim_start_matches('v').to_string();
     let available = latest != current;
 
-    let assets = release
+    let assets: Vec<UpdateAsset> = release
         .assets
         .into_iter()
-        .map(|a| UpdateAsset {
-            name: a.name,
-            url: a.browser_download_url,
-            size: a.size,
+        .filter_map(|asset| {
+            let url = parse_official_installer_url(&asset.browser_download_url).ok()?;
+            let last_segment = url.path_segments()?.last()?.to_string();
+            if last_segment != asset.name {
+                return None;
+            }
+            Some(UpdateAsset { name: asset.name, url: url.to_string(), size: asset.size })
         })
         .collect();
+
+    let error = if available && assets.is_empty() {
+        Some("Rilis terbaru tidak menyediakan installer Windows AzaleaHouse yang valid. Instalasi dinonaktifkan sampai verifikasi tanda tangan resmi tersedia.".to_string())
+    } else {
+        None
+    };
 
     Ok(UpdateInfo {
         available,
@@ -153,11 +185,12 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
         latest_version: latest,
         body: release.body,
         assets,
-        error: None,
+        error,
     })
 }
 
-/// Unduh satu asset ke folder cache dengan progres streaming.
+/// Download is manual and constrained to the official release. The output is not executable
+/// through this app until the official signed-updater flow is configured.
 #[tauri::command]
 pub async fn download_update(
     app: AppHandle,
@@ -165,125 +198,129 @@ pub async fn download_update(
     asset_name: String,
     state: State<'_, DownloadToken>,
 ) -> Result<String, String> {
-    // Reset token pembatal
+    let url = parse_official_installer_url(&asset_url)?;
+    let segments: Vec<&str> = url.path_segments().ok_or_else(|| "Path URL installer tidak valid".to_string())?.collect();
+    if segments.last().copied() != Some(asset_name.as_str()) || !is_safe_installer_name(&asset_name) {
+        return Err("Nama file tidak sesuai dengan asset installer resmi".into());
+    }
+
     state.0.store(false, Ordering::SeqCst);
-
-    let base = crate::fs::resolve_memory_path().await;
-    let cache_dir = base.join("cache");
-    fs::create_dir_all(&cache_dir)
-        .await
-        .map_err(|e| format!("Gagal buat cache folder: {e}"))?;
-
+    let cache_dir = crate::fs::resolve_memory_path().await.join("cache");
+    fs::create_dir_all(&cache_dir).await.map_err(|e| format!("Gagal buat cache folder: {e}"))?;
     let dest = cache_dir.join(&asset_name);
+    let partial = cache_dir.join(format!("{asset_name}.part"));
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(0)) // no timeout for large downloads
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(0))
         .user_agent("AzaleaHouse/0.1")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
-    let resp = client
-        .get(&asset_url)
-        .send()
-        .await
-        .map_err(|e| format!("Unduh gagal: {e}"))?;
+    let resp = client.get(url).send().await.map_err(|e| format!("Unduh gagal: {e}"))?;
+    let resp = resp.error_for_status().map_err(|e| format!("Server menolak unduhan: {e}"))?;
+    if !matches!(
+        resp.url().host_str().unwrap_or_default(),
+        "github.com" | "release-assets.githubusercontent.com" | "objects.githubusercontent.com"
+    ) {
+        return Err("Redirect unduhan menuju host yang tidak diizinkan".into());
+    }
 
     let total = resp.content_length().unwrap_or(0);
-    let mut file = fs::File::create(&dest)
-        .await
-        .map_err(|e| format!("Gagal buat file: {e}"))?;
+    if total > MAX_INSTALLER_BYTES {
+        return Err("Ukuran installer melebihi batas 2 GiB".into());
+    }
 
+    let mut file = fs::File::create(&partial).await.map_err(|e| format!("Gagal buat file sementara: {e}"))?;
     let mut downloaded: u64 = 0;
+    let mut last_sample_bytes: u64 = 0;
     let mut last_tick = std::time::Instant::now();
     let mut last_speed: u64 = 0;
+    let mut stream = resp.bytes_stream();
 
-    let stream = resp.bytes_stream();
-    tokio::pin!(stream);
-
-    while let Some(chunk) = stream.next().await {
-        // Cek pembatalan
+    while let Some(chunk_result) = stream.next().await {
         if state.0.load(Ordering::SeqCst) {
-            let _ = fs::remove_file(&dest).await;
-            return Err("Unduh dibatalkan".to_string());
+            drop(file);
+            let _ = fs::remove_file(&partial).await;
+            return Err("Unduhan dibatalkan".into());
+        }
+        let chunk = match chunk_result {
+            Ok(chunk) => chunk,
+            Err(e) => {
+                drop(file);
+                let _ = fs::remove_file(&partial).await;
+                return Err(format!("Stream unduhan gagal: {e}"));
+            }
+        };
+        downloaded = match downloaded.checked_add(chunk.len() as u64) {
+            Some(size) if size <= MAX_INSTALLER_BYTES => size,
+            _ => {
+                drop(file);
+                let _ = fs::remove_file(&partial).await;
+                return Err("Unduhan melewati batas ukuran 2 GiB".into());
+            }
+        };
+        if let Err(e) = file.write_all(&chunk).await {
+            drop(file);
+            let _ = fs::remove_file(&partial).await;
+            return Err(format!("Gagal menulis file sementara: {e}"));
         }
 
-        let chunk = chunk.map_err(|e| format!("Stream error: {e}"))?;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| format!("Gagal tulis file: {e}"))?;
-        downloaded += chunk.len() as u64;
-
-        // Emit progres setiap ~500ms
-        if last_tick.elapsed().as_millis() > 500 {
+        if last_tick.elapsed().as_millis() >= 500 {
             let elapsed = last_tick.elapsed().as_secs_f64();
             if elapsed > 0.0 {
-                last_speed = ((downloaded as f64) / elapsed) as u64;
+                last_speed = ((downloaded - last_sample_bytes) as f64 / elapsed) as u64;
             }
-            let eta = if last_speed > 0 && total > 0 {
+            let eta = if last_speed > 0 && total >= downloaded && total > 0 {
                 Some((total - downloaded) / last_speed)
             } else {
                 None
             };
-            let _ = app.emit("azalea:update_progress", UpdateProgress {
-                downloaded,
-                total,
-                speed: last_speed,
-                eta_seconds: eta,
-            });
+            let _ = app.emit("azalea:update_progress", UpdateProgress { downloaded, total, speed: last_speed, eta_seconds: eta });
+            last_sample_bytes = downloaded;
             last_tick = std::time::Instant::now();
         }
     }
 
-    file.flush().await.map_err(|e| format!("Flush error: {e}"))?;
+    if let Err(e) = file.flush().await {
+        drop(file);
+        let _ = fs::remove_file(&partial).await;
+        return Err(format!("Flush file gagal: {e}"));
+    }
+    if let Err(e) = file.sync_all().await {
+        drop(file);
+        let _ = fs::remove_file(&partial).await;
+        return Err(format!("Sinkronisasi file gagal: {e}"));
+    }
     drop(file);
 
-    // Final emit — 100%
-    let _ = app.emit("azalea:update_progress", UpdateProgress {
-        downloaded: total,
-        total,
-        speed: last_speed,
-        eta_seconds: if last_speed > 0 && total > 0 {
-            Some(0)
-        } else {
-            None
-        },
-    });
-
-    // Verify file integrity (size match)
-    let actual = fs::metadata(&dest)
-        .await
-        .map_err(|e| format!("Gagal baca metadata: {e}"))?
-        .len();
-    if actual != total && total > 0 {
-        let _ = fs::remove_file(&dest).await;
-        return Err(format!("Ukuran file tidak cocok: {actual} vs {total}"));
+    let actual = match fs::metadata(&partial).await {
+        Ok(meta) => meta.len(),
+        Err(e) => {
+            let _ = fs::remove_file(&partial).await;
+            return Err(format!("Gagal memeriksa file hasil unduhan: {e}"));
+        }
+    };
+    if (total > 0 && actual != total) || actual == 0 {
+        let _ = fs::remove_file(&partial).await;
+        return Err(format!("Ukuran file tidak cocok atau kosong: diterima {actual} byte, Content-Length {total} byte"));
     }
 
+    let _ = fs::remove_file(&dest).await;
+    if let Err(e) = fs::rename(&partial, &dest).await {
+        let _ = fs::remove_file(&partial).await;
+        return Err(format!("Gagal menyelesaikan unduhan: {e}"));
+    }
+
+    let final_total = if total > 0 { total } else { downloaded };
+    let _ = app.emit("azalea:update_progress", UpdateProgress {
+        downloaded, total: final_total, speed: last_speed, eta_seconds: Some(0),
+    });
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// Set token pembatal download.
 #[tauri::command]
 pub fn cancel_download(state: State<'_, DownloadToken>) -> Result<(), String> {
     state.0.store(true, Ordering::SeqCst);
-    Ok(())
-}
-
-/// Luncurkan installer yang sudah di-download (manual user action).
-#[tauri::command]
-pub async fn apply_update(path: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    if !path.exists() {
-        return Err("File installer tidak ditemukan".to_string());
-    }
-    #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", &path.to_string_lossy().to_string()])
-        .spawn()
-        .map_err(|e| format!("Gagal meluncurkan installer: {e}"))?;
-    #[cfg(not(target_os = "windows"))]
-    std::process::Command::new(&path)
-        .spawn()
-        .map_err(|e| format!("Gagal meluncurkan installer: {e}"))?;
     Ok(())
 }
