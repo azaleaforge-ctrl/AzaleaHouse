@@ -18,6 +18,7 @@
   position: absolute;
   inset: -4%;
   background: url("/assets/azalea-sunset.png") center / cover no-repeat;
+  transition: background-image 260ms ease;
   will-change: transform;
 }
 .bg-stars {
@@ -498,4 +499,27 @@
 .panel-note svg {
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+/* Light theme uses the supplied Dreamy Balcony Over a Sea of Clouds wallpaper. */
+.bg--light .bg-image {
+  background-image: url("/assets/azalea-clouds.png");
+}
+.bg--light .bg-stars {
+  opacity: .16;
+}
+.bg--light .bg-scrim {
+  background:
+    radial-gradient(120% 90% at 50% 40%, transparent 45%, rgba(255,250,255,.25) 100%),
+    linear-gradient(
+      180deg,
+      rgba(244,240,255,.50) 0%,
+      rgba(244,240,255,.10) 34%,
+      rgba(255,249,244,.16) 62%,
+      rgba(237,231,251,.48) 100%
+    );
+}
+.bg--light .bg-stars::before,
+.bg--light .bg-stars::after {
+  opacity: .15;
 }

@@ -247,22 +247,39 @@ export function IconAlertCircle({ size = 20, className }: IconProps) {
 
 /** Logo bunga azalea — lima kelopak, palet senja */
 export function LogoMark({ size = 26, className }: IconProps) {
-  const petals = ["#ffb27a", "#c9b9f2", "#ff9a5c", "#b2a5e4", "#ffd2ae"];
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" className={className} aria-hidden="true" focusable={false}>
-      {petals.map((fill, idx) => (
-        <ellipse
-          key={idx}
-          cx="16"
-          cy="9"
-          rx="4.4"
-          ry="6.2"
-          fill={fill}
-          opacity="0.92"
-          transform={`rotate(${idx * 72} 16 16)`}
-        />
-      ))}
-      <circle cx="16" cy="16" r="3.2" fill="#ffe7d2" />
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 40 40"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+      focusable={false}
+    >
+      <defs>
+        <linearGradient id="azalea-petal-peach" x1="9" y1="4" x2="28" y2="35" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFE0BE" />
+          <stop offset="1" stopColor="#F58EAA" />
+        </linearGradient>
+        <linearGradient id="azalea-petal-lavender" x1="9" y1="5" x2="31" y2="34" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#E5D8FF" />
+          <stop offset="1" stopColor="#8D79D8" />
+        </linearGradient>
+        <radialGradient id="azalea-center" cx="0" cy="0" r="1" gradientTransform="translate(20 19) rotate(90) scale(9)" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFF7DD" />
+          <stop offset="1" stopColor="#FFC47F" />
+        </radialGradient>
+      </defs>
+      <circle cx="20" cy="20" r="19" fill="url(#azalea-petal-lavender)" opacity=".14" />
+      <path d="M20 4.5C25.8 11.4 25.5 15.1 20 20C14.4 15.1 14.2 11.4 20 4.5Z" fill="url(#azalea-petal-peach)" />
+      <path d="M35.5 20C28.6 25.8 24.9 25.5 20 20C24.9 14.4 28.6 14.2 35.5 20Z" fill="url(#azalea-petal-lavender)" />
+      <path d="M20 35.5C14.2 28.6 14.5 24.9 20 20C25.6 24.9 25.8 28.6 20 35.5Z" fill="url(#azalea-petal-peach)" />
+      <path d="M4.5 20C11.4 14.2 15.1 14.5 20 20C15.1 25.6 11.4 25.8 4.5 20Z" fill="url(#azalea-petal-lavender)" />
+      <path d="M9.2 9.2C17.9 10.8 20.5 13.5 20 20C13.5 20.5 10.8 17.9 9.2 9.2Z" fill="#FFC8A2" opacity=".94" />
+      <path d="M30.8 9.2C29.2 17.9 26.5 20.5 20 20C19.5 13.5 22.1 10.8 30.8 9.2Z" fill="#CDBEF4" opacity=".95" />
+      <circle cx="20" cy="20" r="5.2" fill="url(#azalea-center)" />
+      <path d="M20 16.8L20.9 19.1L23.2 20L20.9 20.9L20 23.2L19.1 20.9L16.8 20L19.1 19.1L20 16.8Z" fill="#9D6780" />
     </svg>
   );
 }

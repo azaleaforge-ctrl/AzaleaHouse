@@ -440,3 +440,72 @@
   .local-ai-recommendation-card { flex-direction: column; }
   .local-ai-recommendation-card > button { align-self: flex-start; }
 }
+
+/* ---- Model inventory filters and uninstall actions ---- */
+.local-ai-inventory-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--blur-sm)) saturate(1.15);
+  backdrop-filter: blur(var(--blur-sm)) saturate(1.15);
+}
+.local-ai-inventory-filters > span {
+  margin-right: 3px;
+  color: var(--color-text-faint);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .45px;
+  text-transform: uppercase;
+}
+.local-ai-inventory-filters button {
+  padding: 5px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  background: rgba(255,255,255,.035);
+  color: var(--color-text-dim);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.local-ai-inventory-filters button.is-active {
+  color: var(--color-text);
+  border-color: rgba(255,178,122,.48);
+  background: rgba(255,178,122,.13);
+}
+.local-ai-model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.local-ai-model-actions .btn--danger {
+  color: #ff9aaa;
+  border-color: rgba(255,137,152,.28);
+  background: rgba(187,49,71,.08);
+}
+.local-ai-model-actions .btn--danger:hover:not(:disabled) {
+  border-color: rgba(255,137,152,.6);
+  background: rgba(187,49,71,.18);
+}
+.local-ai-inventory-filters button:focus-visible,
+.local-ai-task-filter button:focus-visible {
+  outline-offset: 2px;
+}
+.local-ai-hardware-panel[hidden],
+.local-ai-model-list[hidden],
+.local-ai-catalog-stack[hidden],
+.local-ai-columns > section[hidden] {
+  display: none !important;
+}
+@media (max-width: 760px) {
+  .local-ai-inventory-filters { align-items: flex-start; }
+  .local-ai-inventory-filters > span { width: 100%; }
+  .local-ai-model-actions { width: 100%; }
+  .local-ai-model-actions .btn { flex: 1; }
+}
