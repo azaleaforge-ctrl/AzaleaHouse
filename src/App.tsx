@@ -77,15 +77,27 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
   const latestUser = [...messages].reverse().find((message) => message.role === "user");
   const attachmentContext = buildAttachmentContext(latestUser?.text ?? "", recentAttachments);
 
+  // Keep the full request bounded even when the conversation contains many prior image uploads.
+  let remainingImageSlots = 5;
+  const imageSlotsByMessage = new Map<string, number>();
+  for (const message of [...userMessagesWithAttachments].reverse()) {
+    const imageCount = (message.attachments ?? []).filter((attachment) => attachment.format === "image").length;
+    const allowed = Math.min(imageCount, remainingImageSlots);
+    if (allowed > 0) imageSlotsByMessage.set(message.id, allowed);
+    remainingImageSlots -= allowed;
+    if (remainingImageSlots === 0) break;
+  }
+
   return Promise.all(messages.map(async (message) => {
     let images: string[] | undefined;
-    if (message.role === "user" && selectedIds.has(message.id)) {
+    const imageLimit = imageSlotsByMessage.get(message.id) ?? 0;
+    if (message.role === "user" && selectedIds.has(message.id) && imageLimit > 0) {
       if (message.images?.length) {
-        images = message.images;
+        images = message.images.slice(0, imageLimit);
       } else {
         const imageAttachments = (message.attachments ?? [])
           .filter((attachment) => attachment.format === "image" && attachment.id)
-          .slice(0, 5);
+          .slice(0, imageLimit);
         const loaded = await Promise.all(imageAttachments.map(async (attachment) => {
           const base64 = attachment.id ? await invokeLoadAttachmentBase64(attachment.id) : null;
           return base64 ?? "";
