@@ -542,9 +542,11 @@ export async function invokeDownloadUpdate(
 ): Promise<string> {
   if (!isTauri()) throw new Error("Unduhan pembaruan hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");
+  // Tauri v2 maps Rust snake_case command arguments to camelCase by default.
+  // Keep these keys aligned with Rust's asset_url and asset_name parameters.
   return await invoke<string>("download_update", {
-    asset_url: assetUrl,
-    asset_name: assetName,
+    assetUrl,
+    assetName,
   });
 }
 

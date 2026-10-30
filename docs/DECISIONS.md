@@ -51,7 +51,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Windows installer distribution and release behavior
 
-- The current app version is synchronized to **0.1.5** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- The current app version is synchronized to **0.1.6** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
 - The Windows release workflow runs on `main`, builds a Windows x64 NSIS installer, runs Rust tests, validates that the installer filename matches the app version, and publishes the `.exe` plus `SHA256SUMS.txt` to GitHub Releases when that version does not already have a release.
 - The first release is intentionally an **unsigned development build**. Windows SmartScreen may warn; the workflow does not claim the checksum is a digital signature and does not configure automatic installer execution.
 - Future releases require synchronized version metadata to be bumped before the corresponding changes are merged to `main`. The workflow does not overwrite an existing release with the same version.
@@ -106,3 +106,10 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - Loading a model into RAM is separate from downloading it. Ollama does not expose a reliable percentage for the full model-preload operation through the existing status API, so the chat displays an indeterminate status while loading rather than an invented percent-to-ready estimate.
 - The model manager is a local-runtime interface, not a skill/plugin execution system. Tools/skills are orchestration modules and are not assumed to directly increase token generation speed.
 - Version 0.1.5 on the repair branch is source/configuration metadata only until merged and a successful Windows Release workflow publishes the versioned installer.
+
+
+## Updater argument-casing repair — v0.1.6
+
+- Fixed the manual updater invocation to send the camelCase keys assetUrl and assetName to Tauri v2's command bridge. The Rust command parameters remain asset_url and asset_name; Tauri's default command argument mapping is camelCase on the JavaScript side.
+- The reported error "invalid args assetUrl ... missing required key assetUrl" happened because the frontend sent snake_case keys. The command bridge expects the camelCase keys for these arguments.
+- All synchronized version metadata is bumped to 0.1.6 so the next successful Windows release workflow produces a new installable version with the fix. No release is created from this repair branch.

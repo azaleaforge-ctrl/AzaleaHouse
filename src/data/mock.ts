@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.5";
+export const FALLBACK_VERSION = "0.1.6";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -101,11 +101,11 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV015: string[] = [
-  "Build pengembangan 0.1.5: daftar model Ollama lokal kini dibaca dari runtime, bukan katalog UI statis.",
-  "Menu AI Lokal dapat menarik model melalui API Ollama dan menampilkan progres layer yang benar-benar dilaporkan.",
-  "Model yang dipasang sendiri lewat Ollama dapat disegarkan ke daftar dan dipilih langsung dari header chat.",
-  "Model tidak dibundel di installer; proses preload RAM tidak memiliki persentase resmi sehingga ditampilkan sebagai indikator proses.",
+export const changelogV016: string[] = [
+  "Build pengembangan 0.1.6: memperbaiki pemanggilan command unduhan pembaruan pada Tauri v2.",
+  "Argumen installer sekarang dikirim dengan nama camelCase yang sesuai, sehingga unduhan tidak gagal karena assetUrl hilang.",
+  "Fitur AI Lokal dan daftar model Ollama tetap tersedia dari versi sebelumnya.",
+  "Versi 0.1.6 memperbaiki jalur unduhan updater; build rilis dibuat oleh workflow Windows setelah PR masuk ke main.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {
