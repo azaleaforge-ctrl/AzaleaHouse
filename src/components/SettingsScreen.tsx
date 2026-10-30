@@ -12,6 +12,7 @@ export function SettingsScreen({
   onUnloadModel,
   modelBusy,
   memoryPath,
+  memoryNotice,
   onOpenMemoryFolder,
   onChangeMemoryPath,
   onBackupMemory,
@@ -23,6 +24,7 @@ export function SettingsScreen({
   onUnloadModel?: () => void;
   modelBusy?: boolean;
   memoryPath?: string | null;
+  memoryNotice?: string | null;
   onOpenMemoryFolder?: () => void;
   onChangeMemoryPath?: () => void;
   onBackupMemory?: () => void;
@@ -65,6 +67,14 @@ export function SettingsScreen({
               Backup
             </button>
           </div>
+          {memoryNotice ? (
+            <p
+              className="settings-memory-notice"
+              role={memoryNotice.startsWith("Gagal") ? "alert" : "status"}
+            >
+              {memoryNotice}
+            </p>
+          ) : null}
         </section>
 
         <section className="settings-section" aria-labelledby="sec-tampilan">
