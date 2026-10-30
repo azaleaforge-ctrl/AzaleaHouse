@@ -45,6 +45,21 @@ function MessageBubble({
         className={"bubble md" + (msg.streaming ? " is-streaming" : "")}
         dangerouslySetInnerHTML={{ __html: renderMarkdown(displayContent) }}
       />
+      {msg.attachments && msg.attachments.length > 0 ? (
+        <div className="message-attachments" aria-label="Lampiran pesan">
+          {msg.attachments.map((attachment, index) => (
+            <div className="message-attachment" key={attachment.id ?? attachment.name + "-" + index}>
+              <span className="message-attachment-name">{attachment.name}</span>
+              <span className="message-attachment-meta">
+                {attachment.format === "image" ? "Gambar" : attachment.format === "document" ? "Dokumen" : attachment.format === "text" ? "Teks" : "File"}
+                {" · "}{(attachment.size / 1024).toFixed(1)} KB
+              </span>
+              {attachment.error ? <span className="message-attachment-error">Ekstraksi perlu diperiksa</span> : null}
+              {attachment.id ? <span className="message-attachment-saved">Tersimpan lokal</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {msg.role === "assistant" ? (
         <div className="msg-actions">
           <button
