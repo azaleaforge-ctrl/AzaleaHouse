@@ -32,6 +32,8 @@ export function ChatView({
   profile,
   onProfileChange,
   runtimeStatus,
+  chatError,
+  onDismissChatError,
   attachments,
   onRemoveAttachment,
   onAttachFiles,
@@ -43,7 +45,7 @@ export function ChatView({
   panelOpen: boolean;
   onTogglePanel: () => void;
   onNewChat: () => void;
-  onSend: (text: string, attachments: Attachment[]) => void;
+  onSend: (text: string, attachments: Attachment[]) => boolean;
   onStop: () => void;
   onRegenerate: () => void;
   thinking: boolean;
@@ -52,6 +54,8 @@ export function ChatView({
   profile: ProfileId;
   onProfileChange: (p: ProfileId) => void;
   runtimeStatus: RuntimeStatus;
+  chatError: string | null;
+  onDismissChatError: () => void;
   attachments: Attachment[];
   onRemoveAttachment: (name: string) => void;
   onAttachFiles: (files: FileList) => void;
@@ -62,8 +66,7 @@ export function ChatView({
   const send = () => {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
-    onSend(text, attachments);
-    setDraft("");
+    if (onSend(text, attachments)) setDraft("");
   };
 
   const applySuggestion = (prompt: string) => {
@@ -71,13 +74,21 @@ export function ChatView({
     inputRef.current?.focus();
   };
 
-  const title = messages.length > 0 ? "Sesi pratinjau" : "Percakapan baru";
+  const title = messages.length > 0 ? "Percakapan" : "Percakapan baru";
+  const runtimeChipLabel =
+    runtimeStatus === "ready"
+      ? "Siap"
+      : runtimeStatus === "unloaded"
+        ? "Tidak dimuat"
+        : runtimeStatus === "loading"
+          ? "Memuat…"
+          : "Belum siap";
 
   return (
     <>
       <header className="chat-header">
         <h1 className="chat-title">{title}</h1>
-        <span className="chip chip--model" title="Model aktif (pratinjau)">
+        <span className="chip chip--model" title="Status model AI lokal">
           <span
             className={
               runtimeStatus === "ready"
@@ -89,7 +100,7 @@ export function ChatView({
             aria-hidden="true"
           />
           {modelName}
-          <span className="chip-note">Pratinjau</span>
+          <span className="chip-note">{runtimeChipLabel}</span>
         </span>
         <div className="header-spacer" />
         <button
@@ -148,6 +159,15 @@ export function ChatView({
           onRegenerate={onRegenerate}
         />
       )}
+
+      {chatError ? (
+        <div className="chat-error" role="alert">
+          <p>{chatError}</p>
+          <button type="button" onClick={onDismissChatError} aria-label="Tutup pesan kesalahan">
+            Tutup
+          </button>
+        </div>
+      ) : null}
 
       {attachments.length > 0 ? (
         <div className="attachment-bar">
