@@ -20,6 +20,7 @@ Remove demo conversations and fake model replies so that AzaleaHouse never prese
 - If the backend cannot start a stream, remove the empty assistant placeholder, report a visible error, and refresh runtime status rather than returning demo text.
 - Stream errors are shown as errors; empty assistant placeholders are removed instead of turning the backend error string into a fake assistant answer. Partial model output, if any, remains visible alongside an error banner.
 - Regeneration requires a usable local runtime and no longer substitutes a static response.
+- Raw model thinking traces are not rendered or persisted in the transcript. The Thinking control can still influence model generation; the UI and stored conversation keep the user-facing answer only.
 - Removed the preview-only `Model Mini` / `mini-preview` choice and sanitizes saved settings that still refer to it back to the default Gemma 4 E2B option.
 - Removed the mock-only thinking indicator state and updated the chat header to display local runtime status instead of "Pratinjau".
 
@@ -32,9 +33,10 @@ These checks are the intended acceptance path on Windows with the project depend
 3. Start Ollama and ensure `gemma4:e2b` is available: a sent prompt is routed through `chat_start` and the UI shows the real stream.
 4. Simulate a failed `chat_start`/stream: an error is shown, not a mock reply.
 5. Regenerate with the runtime unavailable: the UI reports the failure and does not substitute another text.
-6. Restore a saved conversation: the existing saved messages still load.
-7. TypeScript + Vite build: `npm run build`.
-8. Rust validation: `cargo check`; run Rust tests after the full checkout is available.
+6. Restore a saved conversation: the existing saved messages still load and legacy `thinking` fields are ignored.
+7. Enable Thinking: verify the response renders only user-facing content, without a raw chain-of-thought panel.
+8. TypeScript + Vite build: `npm run build`.
+9. Rust validation: `cargo check`; run Rust tests after the full checkout is available.
 
 ## Validation result
 
