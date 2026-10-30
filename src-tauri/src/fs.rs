@@ -1053,7 +1053,7 @@ fn base64_encode(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod conversation_storage_tests {
-    use super::{is_safe_attachment_name, is_safe_conversation_id};
+    use super::{attachment_signature_is_valid, is_safe_attachment_name, is_safe_conversation_id};
 
     #[test]
     fn accepts_app_generated_session_ids() {
@@ -1068,6 +1068,16 @@ mod conversation_storage_tests {
         assert!(!is_safe_conversation_id("folder\\\\file"));
         assert!(!is_safe_conversation_id("id with spaces"));
         assert!(!is_safe_conversation_id(&"a".repeat(129)));
+    }
+
+    #[test]
+    fn validates_attachment_signature_against_extension() {
+        assert!(attachment_signature_is_valid("pdf", b"%PDF-1.7"));
+        assert!(!attachment_signature_is_valid("pdf", b"PK\x03\x04"));
+        assert!(attachment_signature_is_valid("png", b"\x89PNG\r\n\x1a\nrest"));
+        assert!(!attachment_signature_is_valid("png", b"not an image"));
+        assert!(attachment_signature_is_valid("docx", b"PK\x03\x04archive"));
+        assert!(!attachment_signature_is_valid("txt", b"binary\0data"));
     }
 
     #[test]
