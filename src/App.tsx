@@ -59,6 +59,9 @@ function formatConversationTimestamp(value: string): string {
   return `${date.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })} · ${date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+const AUTO_UNLOAD_IDLE_MS = 60 * 60 * 1000;
+const KEEPALIVE_CHECK_MS = 30 * 1000;
+
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
@@ -164,7 +167,9 @@ export default function App() {
   const messagesRef = useRef<Message[]>([]);
   const eventCleanupRef = useRef<(() => void) | null>(null);
   const keepaliveTimerRef = useRef<number | null>(null);
-  const lastActivityRef = useRef(0);
+  // A loaded model at startup starts its idle window from now; zero would cause immediate unload.
+  const lastActivityRef = useRef(Date.now());
+  const runtimeOperationRef = useRef(false);
   const memoryReadyRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -309,42 +314,66 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     invokeRuntimeStatus(settings.ai.model).then((status) => {
-      if (alive && status) setRuntimeStatus(status as RuntimeStatus);
+      if (!alive || !status) return;
+      setRuntimeStatus(status as RuntimeStatus);
+      // A model discovered as loaded starts a fresh idle interval from now.
+      if (status === "ready") lastActivityRef.current = Date.now();
     });
     return () => {
       alive = false;
     };
   }, [settings.ai.model]);
 
-  // ── Keep-alive timer (Fase 3): auto-unload 1h idle in automatic mode ──
+  // ── Runtime lifecycle: automatically unload only after a full idle hour ──
   useEffect(() => {
-    // Only active in automatic mode & when model is loaded
-    if (settings.ai.runtimePolicy !== "auto") return;
-    if (runtimeStatus !== "ready") return;
-    if (genState === "generating") return;
+    if (settings.ai.runtimePolicy !== "auto" || runtimeStatus !== "ready") return;
+    if (genState !== "idle") return;
 
-    keepaliveTimerRef.current = window.setInterval(() => {
-      const elapsed = Date.now() - lastActivityRef.current;
-      // 1 hour (3600000ms) idle → unload
-      if (elapsed >= 3_600_000) {
-        invokeUnloadModel(settings.ai.model).then(() => {
-          invokeRuntimeStatus(settings.ai.model).then((status) => {
-            if (status) setRuntimeStatus(status as RuntimeStatus);
-          });
-        });
-        // Clear timer; will re-arm on next activity
-        if (keepaliveTimerRef.current) {
-          clearInterval(keepaliveTimerRef.current);
-          keepaliveTimerRef.current = null;
+    const timerId = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current < AUTO_UNLOAD_IDLE_MS) return;
+      if (
+        chatStartPendingRef.current ||
+        streamIdRef.current !== null ||
+        runtimeOperationRef.current
+      ) return;
+
+      // Lock synchronously before IPC so manual and automatic unload can't overlap.
+      runtimeOperationRef.current = true;
+      setRuntimeStatus("unloading");
+
+      void (async () => {
+        try {
+          const unloaded = await invokeUnloadModel(settings.ai.model);
+          if (!unloaded) {
+            lastActivityRef.current = Date.now();
+            setChatError("Model otomatis gagal dilepas dari RAM. Model tetap tersedia; coba lagi melalui Pengaturan.");
+            const refreshed = await invokeRuntimeStatus(settings.ai.model);
+            setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+            return;
+          }
+
+          const refreshed = await invokeRuntimeStatus(settings.ai.model);
+          // Ollama can briefly report the model as ready after accepting the unload request.
+          setRuntimeStatus(
+            refreshed && refreshed !== "ready"
+              ? refreshed as RuntimeStatus
+              : "unloaded",
+          );
+        } catch {
+          lastActivityRef.current = Date.now();
+          setChatError("Terjadi kesalahan saat melepas model dari RAM. Periksa status Ollama.");
+          const refreshed = await invokeRuntimeStatus(settings.ai.model);
+          setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+        } finally {
+          runtimeOperationRef.current = false;
         }
-      }
-    }, 60_000); // check every minute
+      })();
+    }, KEEPALIVE_CHECK_MS);
 
+    keepaliveTimerRef.current = timerId;
     return () => {
-      if (keepaliveTimerRef.current) {
-        clearInterval(keepaliveTimerRef.current);
-        keepaliveTimerRef.current = null;
-      }
+      window.clearInterval(timerId);
+      if (keepaliveTimerRef.current === timerId) keepaliveTimerRef.current = null;
     };
   }, [settings.ai.runtimePolicy, runtimeStatus, genState, settings.ai.model]);
 
@@ -380,6 +409,8 @@ export default function App() {
         if (e.id !== streamIdRef.current) return;
 
         if (e.done) {
+          // Start a new idle window from the end of a completed or cancelled stream.
+          lastActivityRef.current = Date.now();
           // Finalise: mark message as not streaming
           setGenState("idle");
           setStreamIdRef(null);
@@ -409,6 +440,7 @@ export default function App() {
           return;
         }
         if (!mounted || e.id !== streamIdRef.current) return;
+        lastActivityRef.current = Date.now();
         const failedMessageId = streamingMsgIdRef.current;
         if (failedMessageId) {
           setMessages((current) => {
@@ -574,6 +606,10 @@ export default function App() {
         setChatError("Penyimpanan lokal masih disiapkan atau tidak tersedia. Tunggu sampai inisialisasi selesai, lalu coba lagi.");
         return false;
       }
+      if (runtimeOperationRef.current) {
+        setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+        return false;
+      }
       if (genState !== "idle") return false;
       if (chatStartPendingRef.current) {
         setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
@@ -619,6 +655,7 @@ export default function App() {
         images: images.length > 0 ? images : undefined,
       };
       const messagesBeforeSend = messagesRef.current;
+      lastActivityRef.current = Date.now();
       setMessages((current) => [...current, userMsg]);
 
       setGenState("generating");
@@ -678,6 +715,7 @@ export default function App() {
         streamIdRef.current = null;
         cancelBeforeStartRef.current = false;
         setGenState("idle");
+        lastActivityRef.current = Date.now();
         setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
         void invokeRuntimeStatus(settings.ai.model).then((status) => {
           if (status) setRuntimeStatus(status as RuntimeStatus);
@@ -694,6 +732,7 @@ export default function App() {
 
   // ── Stop / cancel ──
   const stopGeneration = useCallback(() => {
+    lastActivityRef.current = Date.now();
     const messageId = streamingMsgIdRef.current;
     const activeStreamId = streamIdRef.current;
     cancelBeforeStartRef.current = chatStartPendingRef.current;
@@ -740,6 +779,7 @@ export default function App() {
     const idx = current.lastIndexOf(userMsg);
     const messagesToSend = current.slice(0, idx + 1);
     setChatError(null);
+    lastActivityRef.current = Date.now();
     setMessages((messages) => messages.slice(0, idx + 1));
     setGenState("generating");
 
@@ -793,6 +833,7 @@ export default function App() {
         return;
       }
       cancelBeforeStartRef.current = false;
+      lastActivityRef.current = Date.now();
       setMessages((messages) => messages.filter((message) => message.id !== msgId));
       if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
       streamIdRef.current = null;
@@ -899,18 +940,49 @@ export default function App() {
 
   const model = models.find((m) => m.id === settings.ai.model) ?? models[0];
 
-  // ── Manual model unload (Fase 3) ──
-  const unloadModel = useCallback(() => {
-    if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") return;
-    invokeUnloadModel(settings.ai.model).then((ok) => {
-      if (ok) {
-        keepaliveTimerRef.current = null;
-        invokeRuntimeStatus(settings.ai.model).then((status) => {
-          if (status) setRuntimeStatus(status as RuntimeStatus);
-        });
+  // ── Manual model unload ──
+  const unloadModel = useCallback(async () => {
+    if (runtimeOperationRef.current) {
+      setChatError("Operasi model sedang berlangsung. Tunggu sampai selesai sebelum melepas model.");
+      return;
+    }
+    if (
+      genState !== "idle" ||
+      chatStartPendingRef.current ||
+      streamIdRef.current !== null
+    ) {
+      setChatError("Model tidak bisa dilepas selama chat sedang berjalan. Hentikan atau tunggu respons selesai.");
+      return;
+    }
+    if (runtimeStatus !== "ready") return;
+
+    runtimeOperationRef.current = true;
+    setRuntimeStatus("unloading");
+    try {
+      const unloaded = await invokeUnloadModel(settings.ai.model);
+      if (!unloaded) {
+        lastActivityRef.current = Date.now();
+        setChatError("Gagal melepas model dari RAM. Periksa status Ollama lalu coba lagi.");
+        const refreshed = await invokeRuntimeStatus(settings.ai.model);
+        setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+        return;
       }
-    });
-  }, [runtimeStatus, settings.ai.model]);
+
+      const refreshed = await invokeRuntimeStatus(settings.ai.model);
+      setRuntimeStatus(
+        refreshed && refreshed !== "ready"
+          ? refreshed as RuntimeStatus
+          : "unloaded",
+      );
+    } catch {
+      lastActivityRef.current = Date.now();
+      setChatError("Terjadi kesalahan saat melepas model dari RAM. Periksa status Ollama lalu coba lagi.");
+      const refreshed = await invokeRuntimeStatus(settings.ai.model);
+      setRuntimeStatus((refreshed as RuntimeStatus | null) ?? "ready");
+    } finally {
+      runtimeOperationRef.current = false;
+    }
+  }, [genState, runtimeStatus, settings.ai.model]);
 
   // ── Memory operations (Fase 4) ──
   const openMemoryFolder = useCallback(() => {
@@ -1033,6 +1105,7 @@ export default function App() {
               onBack={() => setView("chat")}
               runtimeStatus={runtimeStatus}
               onUnloadModel={unloadModel}
+              modelBusy={genState === "generating" || runtimeStatus === "unloading"}
               memoryPath={memoryPath}
               onOpenMemoryFolder={openMemoryFolder}
               onChangeMemoryPath={changeMemoryPath}

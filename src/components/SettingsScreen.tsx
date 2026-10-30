@@ -10,6 +10,7 @@ export function SettingsScreen({
   onBack,
   runtimeStatus,
   onUnloadModel,
+  modelBusy,
   memoryPath,
   onOpenMemoryFolder,
   onChangeMemoryPath,
@@ -20,6 +21,7 @@ export function SettingsScreen({
   onBack: () => void;
   runtimeStatus?: RuntimeStatus;
   onUnloadModel?: () => void;
+  modelBusy?: boolean;
   memoryPath?: string | null;
   onOpenMemoryFolder?: () => void;
   onChangeMemoryPath?: () => void;
@@ -159,22 +161,27 @@ export function SettingsScreen({
               />
             }
           />
-          {(runtimeStatus === "ready" || runtimeStatus === "unloaded") && onUnloadModel ? (
+          {(runtimeStatus === "ready" || runtimeStatus === "unloaded") ? (
             <FieldRow
-              label="Model di RAM"
+              label="Status model"
               desc={
                 runtimeStatus === "ready"
-                  ? "Model dimuat dan siap digunakan."
-                  : "Model siap (akan dimuat otomatis pada permintaan)."
+                  ? "Model dimuat di RAM dan siap digunakan."
+                  : "Model tidak berada di RAM; Ollama akan memuatnya saat diperlukan."
               }
               control={
-                <button
-                  type="button"
-                  className="btn btn--sm btn--danger"
-                  onClick={onUnloadModel}
-                >
-                  Matikan
-                </button>
+                runtimeStatus === "ready" && onUnloadModel ? (
+                  <button
+                    type="button"
+                    className="btn btn--sm btn--danger"
+                    onClick={onUnloadModel}
+                    disabled={modelBusy}
+                  >
+                    {modelBusy ? "Sedang bekerja…" : "Matikan"}
+                  </button>
+                ) : (
+                  <span className="field-value">Tidak dimuat</span>
+                )
               }
             />
           ) : null}
