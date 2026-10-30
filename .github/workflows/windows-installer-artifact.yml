@@ -46,12 +46,33 @@ jobs:
       - name: Ensure NSIS is available
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+          $nsisCandidates = @(
+            "$env:ProgramFiles(x86)\NSIS\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "$env:ChocolateyInstall\lib\nsis\tools\makensis.exe",
+            "$env:ChocolateyInstall\lib\nsis.install\tools\makensis.exe"
+          )
+
+          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if (-not $makensis -and -not ($nsisCandidates | Where-Object { Test-Path $_ })) {
             choco install nsis --yes --no-progress
           }
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
-            throw "NSIS makensis.exe was not found; the installer cannot be packaged."
+
+          $makensisPath = $null
+          $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if ($command) {
+            $makensisPath = $command.Source
+          } else {
+            $makensisPath = $nsisCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
+
+          if (-not $makensisPath) {
+            throw "NSIS makensis.exe was not found after installation; the installer cannot be packaged."
+          }
+
+          $nsisDirectory = Split-Path -Parent $makensisPath
+          "$nsisDirectory" >> $env:GITHUB_PATH
+          & $makensisPath /VERSION
 
       - name: Read app version
         id: app_version
