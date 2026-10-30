@@ -1,7 +1,9 @@
 # Repair Phase 5 — Runtime Lifecycle & Keep-Alive
 
-**Status:** Implementation prepared; current-head Windows CI validation pending.
-**Branch:** `fix/phase-5-runtime-lifecycle`
+**Status:** Merged into `main`; Windows CI passed for PR #7.
+**Implementation branch:** `fix/phase-5-runtime-lifecycle`
+**Merge commit:** `6de34916bde93c0f3224e1a40a4f53932200a073`
+**PR validation:** [Run #41055631702](https://github.com/azaleaforge-ctrl/AzaleaHouse/actions/runs/41055631702) passed on head `e7f74b0b2c2e2d8c92c802c4b4f7ef3c43916e97`.
 
 ## Scope
 
@@ -22,7 +24,7 @@ Prevent automatic or manual model unloading while a chat is starting or streamin
 
 ## Validation
 
-Windows GitHub Actions must pass for the current PR head:
+Windows GitHub Actions passed for the Phase 5 implementation PR head before merge and passed again on the resulting `main` commit ([run #41056391163](https://github.com/azaleaforge-ctrl/AzaleaHouse/actions/runs/41056391163)):
 
 - `npm ci` and `npm run build`
 - `cargo check --manifest-path src-tauri/Cargo.toml --all-targets`
