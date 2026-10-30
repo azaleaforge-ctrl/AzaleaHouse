@@ -345,8 +345,14 @@ export function LocalAiView({
                 {models.some((model) => model.id.toLowerCase() === bestModel.id.toLowerCase()) ? (
                   <button type="button" className="btn btn--primary" onClick={() => onUseModel(bestModel.id)}>Gunakan di Chat</button>
                 ) : (
-                  <button type="button" className="btn btn--primary" onClick={() => void pull(bestModel.id)} disabled={pulling || scanningHardware}>
-                    {pulling ? "Mengunduh…" : "Download rekomendasi"}
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={() => void pull(bestModel.id)}
+                    disabled={pulling || scanningHardware || bestModel.fit === "unsupported"}
+                    title={bestModel.fit === "unsupported" ? "Tidak ada model yang memenuhi batas minimum estimasi RAM dan ruang disk." : undefined}
+                  >
+                    {bestModel.fit === "unsupported" ? "Spek belum memadai" : pulling ? "Mengunduh…" : "Download rekomendasi"}
                   </button>
                 )}
               </section>
@@ -398,6 +404,7 @@ export function LocalAiView({
           )}
         </section>
 
+        <div className="local-ai-catalog-stack">
         <section className="local-ai-panel local-ai-catalog-panel">
           <div className="local-ai-panel-heading">
             <div>
@@ -527,6 +534,7 @@ export function LocalAiView({
             </div>
           ) : null}
         </section>
+        </div>
       </div>
     </section>
   );
