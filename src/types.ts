@@ -48,8 +48,6 @@ export interface Message {
   role: "user" | "assistant";
   text: string;
   time: string;
-  /** Konten thinking (rantai penalaran) — hanya jika model mendukung & thinking aktif */
-  thinking?: string;
   /** Apakah pesan ini masih sedang distreaming */
   streaming?: boolean;
   /** Gambar lampiran (base64) untuk pesan ini */
