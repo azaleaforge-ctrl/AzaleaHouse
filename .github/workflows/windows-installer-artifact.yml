@@ -43,49 +43,6 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install pinned NSIS release
-        shell: pwsh
-        run: |
-          $version = "3.13"
-          $url = "https://sourceforge.net/projects/nsis/files/NSIS%203/$version/nsis-$version-setup.exe/download"
-          $setupPath = Join-Path $env:RUNNER_TEMP "nsis-$version-setup.exe"
-          $expectedSha256 = "db9a1038bbc0e53fef24f423fd609979bd578e942f1be1198db186d1c42652a3"
-
-          $downloaded = $false
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $setupPath -MaximumRedirection 10 -TimeoutSec 120
-              $downloaded = $true
-              break
-            } catch {
-              if ($attempt -eq 3) { throw }
-              Start-Sleep -Seconds (5 * $attempt)
-            }
-          }
-
-          if (-not $downloaded -or -not (Test-Path $setupPath)) {
-            throw "Unable to download the pinned NSIS installer."
-          }
-
-          $actualSha256 = (Get-FileHash -Path $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualSha256 -ne $expectedSha256) {
-            throw "NSIS SHA-256 mismatch; refusing to execute the downloaded build dependency."
-          }
-
-          $nsisDirectory = Join-Path "${env:ProgramFiles(x86)}" "NSIS"
-          $process = Start-Process -FilePath $setupPath -ArgumentList @("/S", "/D=$nsisDirectory") -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "NSIS installer returned exit code $($process.ExitCode)."
-          }
-
-          $makensisPath = Join-Path $nsisDirectory "makensis.exe"
-          if (-not (Test-Path $makensisPath)) {
-            throw "Verified NSIS setup completed, but makensis.exe was not found at $makensisPath."
-          }
-
-          "$nsisDirectory" >> $env:GITHUB_PATH
-          & $makensisPath /VERSION
-
       - name: Read app version
         id: app_version
         shell: pwsh
