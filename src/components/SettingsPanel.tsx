@@ -94,6 +94,7 @@ export function SettingsPanel({
         />
         <FieldRow
           label="Batas output"
+          desc="Batas per bagian respons. AzaleaHouse akan mencoba melanjutkan otomatis jika Ollama berhenti karena batas token."
           stacked
           control={
             <select
