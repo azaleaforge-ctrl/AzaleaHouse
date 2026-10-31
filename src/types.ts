@@ -82,6 +82,8 @@ export interface AiSettings {
   runtimePolicy: RuntimePolicy;
   contextWindow: number;
   maxOutputTokens: number;
+  /** Version marker for one-time migration from the old 512-token default. */
+  outputLimitMigrationVersion?: number;
   temperature: number;
   profile: ProfileId;
   topP: number;
