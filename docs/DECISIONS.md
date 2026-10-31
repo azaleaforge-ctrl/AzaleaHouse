@@ -51,7 +51,7 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 
 ## Windows installer distribution and release behavior
 
-- The current app version is synchronized to **0.1.8** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
+- The current release candidate version is synchronized to **0.2.0** across `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the frontend fallback version.
 - The Windows release workflow runs on `main`, builds a Windows x64 NSIS installer, runs Rust tests, validates that the installer filename matches the app version, and publishes the `.exe` plus `SHA256SUMS.txt` to GitHub Releases when that version does not already have a release.
 - The first release is intentionally an **unsigned development build**. Windows SmartScreen may warn; the workflow does not claim the checksum is a digital signature and does not configure automatic installer execution.
 - Future releases require synchronized version metadata to be bumped before the corresponding changes are merged to `main`. The workflow does not overwrite an existing release with the same version.
@@ -135,3 +135,12 @@ Statuses below use the phase numbers in the current PRD, not the separate repair
 - Added the Ollama `/api/delete` command, guarded by exact membership in `/api/tags`, plus a confirmation-first Uninstall action for installed models. AI Lokal filters include all models, installed models, and models not downloaded from the curated catalogue. Uninstalling the active selected model releases it from RAM first when its runtime status is ready.
 - Hardened manual update downloads: retry the official release URL, then fall back to the GitHub Releases API asset endpoint for the exact installer name and parsed release tag. The response must still come from a GitHub-owned host, fit the size limit, and pass PE validation. Failure messages include attempt details if both official paths fail.
 - Version metadata on the branch is synchronized to 0.1.8. Merge and successful Windows release CI are required before the v0.1.8 installer is published.
+
+## v0.2.0 — local Ollama response completion
+
+- Raised the default output budget from 512 to 2,048 tokens. Existing saved settings that still use the previous default are migrated once; the user can continue to change the value manually.
+- Added output-budget choices up to 4,096 tokens and updated the Quick Chat, Balanced, and Deep Analysis presets.
+- The Ollama streaming bridge now inspects the final \`done_reason\`. When Ollama ends a segment because of \`length\`, AzaleaHouse requests continuation from the same local model and appends the text to the active assistant message, with at most three continuation requests.
+- If the bounded recovery still hits the output limit, the app emits \`ERR_OUTPUT_LIMIT\` and preserves the partial answer instead of reporting false success.
+- This release does **not** yet implement the Ollama runtime supervisor/bootstrap plan. Users still need a working local Ollama runtime and downloaded model. Chat content and inference remain local.
+- Release 0.2.0 should be published by the existing main-branch Windows release workflow only after synchronized version metadata, frontend build, Rust tests, installer build, and installer filename validation succeed.
