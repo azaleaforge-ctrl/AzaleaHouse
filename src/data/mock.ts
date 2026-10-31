@@ -26,27 +26,27 @@ export const profiles: ProfileInfo[] = [
     id: "quick",
     name: "Quick Chat",
     desc: "Fakta singkat, terjemahan, revisi ringkas.",
-    outputTokens: 384,
+    outputTokens: 1024,
     thinking: false,
   },
   {
     id: "balanced",
     name: "Balanced",
     desc: "Percakapan dan penulisan sehari-hari.",
-    outputTokens: 512,
+    outputTokens: 2048,
     thinking: false,
   },
   {
     id: "deep",
     name: "Deep Analysis",
     desc: "Analisis berlapis dan tugas kompleks.",
-    outputTokens: 1024,
+    outputTokens: 2048,
     thinking: true,
   },
 ];
 
 export const contextOptions = [2048, 4096, 8192, 16384] as const;
-export const outputOptions = [256, 384, 512, 1024, 2048] as const;
+export const outputOptions = [256, 384, 512, 1024, 2048, 4096] as const;
 
 /** Ekstensi teks yang didukung (Fase 5) */
 export const TEXT_EXTENSIONS = [

@@ -50,3 +50,20 @@ These results must be checked for the current branch head before merging. The wo
 ## Release rule
 
 The app version remains `0.1.0` during development. Do not publish `0.1.1` or any production installer until the planned repairs are complete and the owner explicitly authorizes the release.
+
+## Follow-up — replies stopped by the output-token limit
+
+**Implementation branch:** \`fix/ollama-response-completion\`  
+**Validation:** pending CI and manual Windows/Ollama acceptance; no release is created by this change.
+
+Source review found that the previous default output budget was 512 tokens, and the stream handler treated every valid \`done: true\` record as a normal completion even when Ollama reported \`done_reason: "length"\`. That made an answer stopped by the output limit look like a fully completed response.
+
+The follow-up change:
+- raises the default output budget to 2,048 tokens and migrates the previous saved default of 512 to 2,048; users can still lower it manually;
+- increases the output options and profile presets in Settings;
+- when the Ollama stream ends with \`done_reason: "length"\`, asks the same local model to continue from the partial answer without repeating it, up to three additional generation segments;
+- emits normal completion statistics only after the overall response finishes;
+- surfaces \`ERR_OUTPUT_LIMIT\` when the safety bound is reached, preserving the partial text instead of falsely claiming the answer completed;
+- adds unit coverage for length-reason continuation decisions.
+
+The continuation remains local: each request is sent to the existing loopback Ollama API. This is a bounded recovery mechanism, not a guarantee that every model can complete arbitrarily long answers. Manual tests must still check long answers, cancellation during a continuation, runtime interruption, and models whose context limit is reached.

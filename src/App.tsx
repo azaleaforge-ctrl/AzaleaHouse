@@ -124,7 +124,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     model: "",
     runtimePolicy: "auto",
     contextWindow: 4096,
-    maxOutputTokens: 512,
+    maxOutputTokens: 2048,
+    outputLimitMigrationVersion: 2,
     temperature: 0.7,
     profile: "balanced",
     topP: 0.9,
@@ -351,6 +352,13 @@ export default function App() {
         }
         if (saved.ai) {
           const savedAi = { ...(saved.ai as Record<string, unknown>) };
+          // Previous releases defaulted to 512 output tokens, which frequently
+          // cut longer answers off mid-sentence. Version the migration so a user
+          // can still choose and persist a lower output limit later.
+          if (savedAi.outputLimitMigrationVersion !== 2) {
+            if (savedAi.maxOutputTokens === 512) savedAi.maxOutputTokens = 2048;
+            savedAi.outputLimitMigrationVersion = 2;
+          }
           // Drop the previous mock default; installed models now come only from Ollama.
           if (savedAi.model === "gemma4:e2b") savedAi.model = "";
           setSettings((current) => ({
