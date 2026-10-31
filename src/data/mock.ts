@@ -40,7 +40,7 @@ export const profiles: ProfileInfo[] = [
     id: "deep",
     name: "Deep Analysis",
     desc: "Analisis berlapis dan tugas kompleks.",
-    outputTokens: 4096,
+    outputTokens: 2048,
     thinking: true,
   },
 ];
