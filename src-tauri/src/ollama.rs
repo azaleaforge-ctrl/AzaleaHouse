@@ -686,22 +686,82 @@ pub async fn unload_model(
     }
 }
 
-/// Process one Ollama stream record and return true on the final done marker.
-async fn process_chat_stream_line(app: &tauri::AppHandle, id: &str, line: &str) -> bool {
-    let Some(object) = parse_ollama_stream_line(line) else { return false; };
+const MAX_CHAT_CONTINUATIONS: usize = 3;
+const CHAT_CONTINUATION_PROMPT: &str =
+    "Lanjutkan jawaban asisten tepat dari titik terakhir. Jangan mengulang teks yang sudah tertulis. Pertahankan bahasa, nada, format, dan instruksi asli; selesaikan jawaban secara wajar.";
+
+enum ChatStreamLineOutcome {
+    Continue,
+    Done {
+        reason: Option<String>,
+        record: serde_json::Value,
+    },
+}
+
+fn is_length_limited(reason: Option<&str>) -> bool {
+    reason.is_some_and(|value| value.eq_ignore_ascii_case("length"))
+}
+
+fn should_auto_continue(reason: Option<&str>, continuation_count: usize) -> bool {
+    is_length_limited(reason) && continuation_count < MAX_CHAT_CONTINUATIONS
+}
+
+/// Process one Ollama stream record. Terminal records are returned to the worker
+/// so a length-limited segment is not exposed as a successful completed answer.
+async fn process_chat_stream_line(
+    app: &tauri::AppHandle,
+    id: &str,
+    line: &str,
+    turn_content: &mut String,
+) -> ChatStreamLineOutcome {
+    let Some(object) = parse_ollama_stream_line(line) else {
+        return ChatStreamLineOutcome::Continue;
+    };
+
     if object.get("done").and_then(|value| value.as_bool()).unwrap_or(false) {
-        let _ = emit_done(app, id, &object).await;
-        return true;
+        let reason = object
+            .get("done_reason")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+        return ChatStreamLineOutcome::Done {
+            reason,
+            record: object,
+        };
     }
-    let model = object.get("model").and_then(|value| value.as_str()).unwrap_or("").to_owned();
+
+    let model = object
+        .get("model")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_owned();
     let message = object.get("message").and_then(|value| value.as_object());
-    let content = message.and_then(|value| value.get("content")).and_then(|value| value.as_str()).map(str::to_owned);
-    let thinking = message.and_then(|value| value.get("thinking")).and_then(|value| value.as_str()).map(str::to_owned);
-    if content.is_none() && thinking.is_none() && object.get("done").is_none() { return false; }
-    let _ = app.emit("azalea:chat_chunk", serde_json::json!({
-        "id": id, "model": model, "content": content, "thinking": thinking
-    }));
-    false
+    let content = message
+        .and_then(|value| value.get("content"))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned);
+    let thinking = message
+        .and_then(|value| value.get("thinking"))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned);
+
+    if content.is_none() && thinking.is_none() && object.get("done").is_none() {
+        return ChatStreamLineOutcome::Continue;
+    }
+
+    if let Some(chunk) = content.as_deref() {
+        turn_content.push_str(chunk);
+    }
+
+    let _ = app.emit(
+        "azalea:chat_chunk",
+        serde_json::json!({
+            "id": id,
+            "model": model,
+            "content": content,
+            "thinking": thinking
+        }),
+    );
+    ChatStreamLineOutcome::Continue
 }
 
 async fn chat_worker(
@@ -712,153 +772,222 @@ async fn chat_worker(
     active_streams: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
 ) {
     let http = stream_client();
-    let req_opts = payload.options;
-    let keep_alive = keep_alive_for_policy(&payload.runtime_policy);
-    let mut body_obj = serde_json::json!({
-        "model": payload.model,
-        "messages": payload.messages,
-        "stream": true,
-        "keep_alive": keep_alive,
-        "options": serde_json::json!({
-            "num_ctx": req_opts.num_ctx,
-            "num_predict": req_opts.num_predict,
-            "temperature": req_opts.temperature,
-            "top_p": req_opts.top_p,
-            "top_k": req_opts.top_k,
-            "repeat_penalty": req_opts.repeat_penalty,
-            "stop": req_opts.stop,
-            "seed": req_opts.seed,
-        }),
-    });
+    let ChatRequest {
+        model,
+        messages,
+        think,
+        runtime_policy,
+        options: req_opts,
+    } = payload;
+    let keep_alive = keep_alive_for_policy(&runtime_policy);
+    let mut request_messages = messages;
+    let mut continuation_count = 0usize;
 
-    // Gemma 4 only receives the thinking token when the user explicitly enabled it.
-    if payload.think {
-        body_obj["system"] = serde_json::Value::String("<|think|>".to_owned());
-    }
-
-    // Cancellation must also work while Ollama is loading the model or waiting for
-    // the initial HTTP response headers, not only after the body starts streaming.
+    // A response stopped by num_predict is continued in a bounded number of
+    // additional local requests. The user sees one continuous assistant message.
     tokio::pin!(cancel);
-    let result = tokio::select! {
-        biased;
-        _ = &mut cancel => {
-            let _ = app.emit(
-                "azalea:chat_chunk",
-                serde_json::json!({ "id": id, "done": true }),
-            );
-            remove_active_stream(&active_streams, &id).await;
-            return;
-        }
-        response = http
-            .post(format!("{OLLAMA_BASE}/api/chat"))
-            .json(&body_obj)
-            .send() => response,
-    };
 
-    let resp = match result {
-        Ok(response) => response,
-        Err(ref error) if is_conn_refused(error) => {
-            let _ = emit_error(
-                &app,
-                &id,
-                "ERR_NOT_RUNNING",
-                "Runtime Ollama tidak berjalan. Jalankan Ollama lalu coba lagi.",
-            )
-            .await;
-            remove_active_stream(&active_streams, &id).await;
-            return;
-        }
-        Err(error) => {
-            let _ = emit_error(
-                &app,
-                &id,
-                "ERR_REQUEST",
-                &format!("Permintaan ke Ollama gagal: {error}"),
-            )
-            .await;
-            remove_active_stream(&active_streams, &id).await;
-            return;
-        }
-    };
-
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        let message = extract_ollama_error(&text).unwrap_or(text);
-        let code = if status == 400 && message.to_lowercase().contains("thinking") {
-            "ERR_THINKING_UNSUPPORTED"
-        } else {
-            "ERR_HTTP"
-        };
-        let _ = emit_error(&app, &id, code, &message).await;
-        remove_active_stream(&active_streams, &id).await;
-        return;
-    }
-
-    let stream = resp.bytes_stream();
-    let mut buffer = Vec::new();
-    let mut received_done_marker = false;
-    let mut cancelled = false;
-    let mut stream_error_emitted = false;
-
-    tokio::pin!(stream);
     loop {
-        let next = tokio::select! {
+        let mut body_obj = serde_json::json!({
+            "model": model,
+            "messages": request_messages.clone(),
+            "stream": true,
+            "keep_alive": keep_alive,
+            "options": serde_json::json!({
+                "num_ctx": req_opts.num_ctx,
+                "num_predict": req_opts.num_predict,
+                "temperature": req_opts.temperature,
+                "top_p": req_opts.top_p,
+                "top_k": req_opts.top_k,
+                "repeat_penalty": req_opts.repeat_penalty,
+                "stop": req_opts.stop.clone(),
+                "seed": req_opts.seed,
+            }),
+        });
+
+        // Gemma 4 only receives the thinking token when the user explicitly enabled it.
+        if think {
+            body_obj["system"] = serde_json::Value::String("<|think|>".to_owned());
+        }
+
+        // Cancellation also works while Ollama is loading the model or waiting
+        // for the initial HTTP response headers.
+        let result = tokio::select! {
             biased;
             _ = &mut cancel => {
-                cancelled = true;
-                break;
+                let _ = app.emit(
+                    "azalea:chat_chunk",
+                    serde_json::json!({ "id": id, "done": true }),
+                );
+                remove_active_stream(&active_streams, &id).await;
+                return;
             }
-            item = stream.next() => item,
+            response = http
+                .post(format!("{OLLAMA_BASE}/api/chat"))
+                .json(&body_obj)
+                .send() => response,
         };
 
-        match next {
-            Some(Ok(bytes)) => {
-                buffer.extend_from_slice(&bytes);
-                while let Some(line) = split_line(&mut buffer) {
-                    if process_chat_stream_line(&app, &id, &line).await {
-                        received_done_marker = true;
-                        break;
-                    }
-                }
-                if received_done_marker {
-                    break;
-                }
-            }
-            Some(Err(error)) => {
+        let resp = match result {
+            Ok(response) => response,
+            Err(ref error) if is_conn_refused(error) => {
                 let _ = emit_error(
                     &app,
                     &id,
-                    "ERR_STREAM",
-                    &format!("Stream respons terputus: {error}"),
+                    "ERR_NOT_RUNNING",
+                    "Runtime Ollama tidak berjalan. Jalankan Ollama lalu coba lagi.",
                 )
                 .await;
-                stream_error_emitted = true;
-                break;
+                remove_active_stream(&active_streams, &id).await;
+                return;
             }
-            None => {
-                if !buffer.iter().all(u8::is_ascii_whitespace) {
-                    let final_line = String::from_utf8_lossy(&buffer);
-                    if process_chat_stream_line(&app, &id, &final_line).await {
-                        received_done_marker = true;
+            Err(error) => {
+                let _ = emit_error(
+                    &app,
+                    &id,
+                    "ERR_REQUEST",
+                    &format!("Permintaan ke Ollama gagal: {error}"),
+                )
+                .await;
+                remove_active_stream(&active_streams, &id).await;
+                return;
+            }
+        };
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let message = extract_ollama_error(&text).unwrap_or(text);
+            let code = if status == 400 && message.to_lowercase().contains("thinking") {
+                "ERR_THINKING_UNSUPPORTED"
+            } else {
+                "ERR_HTTP"
+            };
+            let _ = emit_error(&app, &id, code, &message).await;
+            remove_active_stream(&active_streams, &id).await;
+            return;
+        }
+
+        let stream = resp.bytes_stream();
+        let mut buffer = Vec::new();
+        let mut received_done_marker = false;
+        let mut cancelled = false;
+        let mut stream_error_emitted = false;
+        let mut turn_content = String::new();
+        let mut done_reason: Option<String> = None;
+        let mut final_record: Option<serde_json::Value> = None;
+
+        tokio::pin!(stream);
+        loop {
+            let next = tokio::select! {
+                biased;
+                _ = &mut cancel => {
+                    cancelled = true;
+                    break;
+                }
+                item = stream.next() => item,
+            };
+
+            match next {
+                Some(Ok(bytes)) => {
+                    buffer.extend_from_slice(&bytes);
+                    while let Some(line) = split_line(&mut buffer) {
+                        match process_chat_stream_line(&app, &id, &line, &mut turn_content).await {
+                            ChatStreamLineOutcome::Continue => {}
+                            ChatStreamLineOutcome::Done { reason, record } => {
+                                received_done_marker = true;
+                                done_reason = reason;
+                                final_record = Some(record);
+                                break;
+                            }
+                        }
+                    }
+                    if received_done_marker {
+                        break;
                     }
                 }
-                break;
+                Some(Err(error)) => {
+                    let _ = emit_error(
+                        &app,
+                        &id,
+                        "ERR_STREAM",
+                        &format!("Stream respons terputus: {error}"),
+                    )
+                    .await;
+                    stream_error_emitted = true;
+                    break;
+                }
+                None => {
+                    if !buffer.iter().all(u8::is_ascii_whitespace) {
+                        let final_line = String::from_utf8_lossy(&buffer);
+                        match process_chat_stream_line(&app, &id, &final_line, &mut turn_content).await {
+                            ChatStreamLineOutcome::Continue => {}
+                            ChatStreamLineOutcome::Done { reason, record } => {
+                                received_done_marker = true;
+                                done_reason = reason;
+                                final_record = Some(record);
+                            }
+                        }
+                    }
+                    break;
+                }
             }
         }
+
+        if cancelled {
+            break;
+        }
+
+        if !received_done_marker && !stream_error_emitted {
+            let _ = emit_error(
+                &app,
+                &id,
+                "ERR_STREAM_INCOMPLETE",
+                "Stream Ollama berakhir sebelum respons selesai. Sebagian teks mungkin belum lengkap.",
+            )
+            .await;
+            break;
+        }
+
+        if stream_error_emitted {
+            break;
+        }
+
+        if should_auto_continue(done_reason.as_deref(), continuation_count)
+            && !turn_content.trim().is_empty()
+        {
+            request_messages.push(ChatMessageIn {
+                role: "assistant".to_owned(),
+                content: turn_content,
+                images: None,
+            });
+            request_messages.push(ChatMessageIn {
+                role: "user".to_owned(),
+                content: CHAT_CONTINUATION_PROMPT.to_owned(),
+                images: None,
+            });
+            continuation_count += 1;
+            continue;
+        }
+
+        if is_length_limited(done_reason.as_deref()) {
+            let message = if continuation_count >= MAX_CHAT_CONTINUATIONS {
+                "Respons lokal masih mencapai batas output setelah beberapa kali dilanjutkan. Naikkan Batas output atau Context window, lalu coba lagi."
+            } else {
+                "Model mencapai batas output sebelum menghasilkan teks yang bisa dilanjutkan. Naikkan Batas output atau Context window, lalu coba lagi."
+            };
+            let _ = emit_error(&app, &id, "ERR_OUTPUT_LIMIT", message).await;
+            break;
+        }
+
+        if let Some(record) = final_record.as_ref() {
+            let _ = emit_done(&app, &id, record).await;
+        }
+        break;
     }
 
-    if !received_done_marker && !cancelled && !stream_error_emitted {
-        let _ = emit_error(
-            &app,
-            &id,
-            "ERR_STREAM_INCOMPLETE",
-            "Stream Ollama berakhir sebelum respons selesai. Sebagian teks mungkin belum lengkap.",
-        )
-        .await;
-    }
-
-    // Frontend ignores this marker after cancellation/error because it clears its active ID.
+    // Frontend ignores this marker after cancellation/error because the error
+    // handler clears its active stream ID. Successful turns receive it once.
     let _ = app.emit(
         "azalea:chat_chunk",
         serde_json::json!({ "id": id, "done": true }),
@@ -930,6 +1059,17 @@ fn split_line(buf: &mut Vec<u8>) -> Option<String> {
 #[cfg(test)]
 mod streaming_tests {
     use super::{parse_ollama_stream_line, split_line};
+
+    #[test]
+    fn length_limited_responses_are_continued_within_the_safety_bound() {
+        assert!(super::should_auto_continue(Some("length"), 0));
+        assert!(super::should_auto_continue(Some("length"), 2));
+        assert!(!super::should_auto_continue(Some("stop"), 0));
+        assert!(!super::should_auto_continue(None, 0));
+        assert!(!super::should_auto_continue(Some("length"), super::MAX_CHAT_CONTINUATIONS));
+        assert!(super::is_length_limited(Some("length")));
+        assert!(!super::is_length_limited(Some("stop")));
+    }
 
     #[test]
     fn parser_reads_plain_ollama_ndjson_chunk() {
