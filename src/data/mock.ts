@@ -26,7 +26,7 @@ export const profiles: ProfileInfo[] = [
     id: "quick",
     name: "Quick Chat",
     desc: "Fakta singkat, terjemahan, revisi ringkas.",
-    outputTokens: 4096,
+    outputTokens: 1024,
     thinking: false,
   },
   {
@@ -40,7 +40,7 @@ export const profiles: ProfileInfo[] = [
     id: "deep",
     name: "Deep Analysis",
     desc: "Analisis berlapis dan tugas kompleks.",
-    outputTokens: 1024,
+    outputTokens: 4096,
     thinking: true,
   },
 ];
