@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.1.8";
+export const FALLBACK_VERSION = "0.2.0";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -95,11 +95,11 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
-export const changelogV018: string[] = [
-  "Build pengembangan 0.1.8: mode gelap/terang dengan wallpaper berbeda dan pilihan blur yang diterapkan ke permukaan kaca.",
-  "Menu AI Lokal memfilter model terpasang dan belum terpasang serta mendukung penghapusan model dari penyimpanan Ollama setelah konfirmasi.",
-  "Menghapus katalog Gemma 4 E2B hardcoded; daftar model sepenuhnya diambil dari Ollama dan chat meminta pengguna memilih model terpasang.",
-  "Updater sekarang mencoba ulang URL rilis GitHub lalu memakai endpoint asset API resmi sebagai fallback jika jalur redirect gagal.",
+export const changelogV020: string[] = [
+  "Perbaikan chat AI lokal: jawaban yang dihentikan karena batas output token dapat dilanjutkan otomatis hingga tiga kali.",
+  "Batas output default ditingkatkan dari 512 menjadi 2.048 token; preferensi lama dimigrasikan satu kali dan tetap dapat diubah dari Settings.",
+  "Ditambahkan pilihan batas output hingga 4.096 token serta penanganan yang jelas jika jawaban masih mencapai batas generasi.",
+  "Ollama dan model AI tetap berjalan secara lokal. Pengelolaan runtime otomatis dari AzaleaHouse belum termasuk dalam rilis ini; Ollama harus sudah tersedia secara lokal.",
 ];
 
 export function profileById(id: ProfileId): ProfileInfo {
