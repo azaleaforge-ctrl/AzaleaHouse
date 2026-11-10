@@ -29,7 +29,7 @@ export function ImageStudio({
   const [models, setModels] = useState<RouterModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [prompt, setPrompt] = useState("");
-  const [size, setSize] = useState<"1024x1024" | "1024x1536" | "1536x1024">("1024x1024");
+  const [size, setSize] = useState<"1024x1024" | "1024x1536" | "1536x1024" | "1792x1024" | "1024x1792" | "512x512">("1024x1024");
   const [image, setImage] = useState<{ mimeType: string; base64: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,9 +182,12 @@ export function ImageStudio({
 
           <label className="command-label" htmlFor="image-size">Ukuran gambar</label>
           <select id="image-size" className="select select--full" value={size} onChange={(event) => setSize(event.target.value as typeof size)}>
+            <option value="512x512">Persegi kecil · 512 × 512</option>
             <option value="1024x1024">Persegi · 1024 × 1024</option>
             <option value="1024x1536">Potret · 1024 × 1536</option>
             <option value="1536x1024">Landscape · 1536 × 1024</option>
+            <option value="1792x1024">Landscape lebar · 1792 × 1024</option>
+            <option value="1024x1792">Potret tinggi · 1024 × 1792</option>
           </select>
 
           {error ? <p className="command-error" role="alert">{error}</p> : null}
