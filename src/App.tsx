@@ -1165,9 +1165,7 @@ export default function App() {
             model: settings.ai.model,
             messages: modelMessages,
             think: settings.ai.thinking,
-            options: {
-              top_p: settings.ai.topP,
-            },
+            options: {},
             skillsPrompt,
           });
         } else {
@@ -1393,9 +1391,7 @@ export default function App() {
             model: settings.ai.model,
             messages: modelMessages,
             think: settings.ai.thinking,
-            options: {
-              top_p: settings.ai.topP,
-            },
+            options: {},
             skillsPrompt,
           });
         } else {
