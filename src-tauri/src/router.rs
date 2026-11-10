@@ -1300,8 +1300,15 @@ fn is_public_ip(ip: std::net::IpAddr) -> bool {
             if let Some(mapped) = addr.to_ipv4_mapped() {
                 return is_public_ip(std::net::IpAddr::V4(mapped));
             }
+            // Explicit prefix checks keep the crate compatible with its declared
+            // Rust 1.77 minimum, without depending on newer Ipv6Addr helpers.
+            let octets = addr.octets();
+            let unique_local = octets[0] & 0xfe == 0xfc; // fc00::/7
+            let link_local = octets[0] == 0xfe && octets[1] & 0xc0 == 0x80; // fe80::/10
+            let documentation = octets[0] == 0x20 && octets[1] == 0x01
+                && octets[2] == 0x0d && octets[3] == 0xb8; // 2001:db8::/32
             !(addr.is_loopback() || addr.is_unspecified() || addr.is_multicast()
-                || addr.is_unique_local() || addr.is_unicast_link_local())
+                || unique_local || link_local || documentation)
         }
     }
 }
@@ -1379,11 +1386,11 @@ fn remove_rejected_image_parameter(body: &mut serde_json::Value, detail: &str) -
         Some(object) => object,
         None => return false,
     };
-    let candidates = [
-        ("response_format", ["response_format", "response format"].as_slice()),
-        ("size", ["size", "width", "height", "aspect_ratio", "aspect ratio"].as_slice()),
-        ("n", ["num_images", "n"].as_slice()),
-        ("output_format", ["output_format", "output format"].as_slice()),
+    let candidates: [(&str, &[&str]); 4] = [
+        ("response_format", &["response_format", "response format"]),
+        ("size", &["size", "width", "height", "aspect_ratio", "aspect ratio"]),
+        ("n", &["num_images", "n"]),
+        ("output_format", &["output_format", "output format"]),
     ];
     for (field, aliases) in candidates {
         let mentioned = aliases.iter().any(|alias| lower.contains(alias));
