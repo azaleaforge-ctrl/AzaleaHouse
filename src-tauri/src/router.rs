@@ -522,6 +522,7 @@ fn process_sse_line(
     model: &str,
     line: &[u8],
     has_content: &mut bool,
+    saw_finish_reason: &mut bool,
 ) -> Result<Option<bool>, String> {
     let line = String::from_utf8_lossy(line).trim().to_owned();
     let Some(data) = line.strip_prefix("data:") else { return Ok(None) };
@@ -532,6 +533,9 @@ fn process_sse_line(
     let value: serde_json::Value = serde_json::from_str(data)
         .map_err(|error| format!("Data stream 9Router tidak valid: {error}"))?;
     let parsed = parse_completion_chunk(&value)?;
+    if parsed.finished {
+        *saw_finish_reason = true;
+    }
     if let Some(content) = parsed.content {
         *has_content = true;
         let _ = app.emit("azalea:chat_chunk", serde_json::json!({
@@ -553,7 +557,7 @@ fn process_sse_line(
             "thinking": true
         }));
     }
-    Ok(parsed.finished.then_some(true))
+    Ok(None)
 }
 
 async fn router_worker(
@@ -673,18 +677,23 @@ async fn router_worker(
             // not a JSON completion, attempt the documented data: line format.
             let text = String::from_utf8_lossy(&raw);
             let mut has_content = false;
+            let mut saw_finish_reason = false;
+            let mut saw_done = false;
             for line in text.split_inclusive('\n') {
-                let _ = process_sse_line(&app, &id, &payload.model, line.as_bytes(), &mut has_content)?;
+                if process_sse_line(&app, &id, &payload.model, line.as_bytes(), &mut has_content, &mut saw_finish_reason)?.is_some() {
+                    saw_done = true;
+                }
             }
-            if has_content {
+            if has_content && (saw_done || saw_finish_reason) {
                 return Ok(());
             }
-            return Err("Respons 9Router bukan JSON completion atau SSE yang dapat dibaca.".to_owned());
+            return Err("Respons 9Router bukan JSON completion atau SSE selesai yang dapat dibaca.".to_owned());
         }
 
         let mut stream = response.bytes_stream();
         let mut pending = Vec::<u8>::new();
         let mut has_content = false;
+        let mut saw_finish_reason = false;
         let mut cancelled = false;
         let mut finished = false;
 
@@ -703,16 +712,24 @@ async fn router_worker(
 
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let line = pending.drain(..=newline).collect::<Vec<_>>();
-                if let Some(done) = process_sse_line(&app, &id, &payload.model, &line, &mut has_content)? {
-                    finished = done;
-                    if done { break; }
+                if process_sse_line(&app, &id, &payload.model, &line, &mut has_content, &mut saw_finish_reason)?.is_some() {
+                    finished = true;
+                    break;
                 }
             }
             if finished { break; }
         }
 
         if !finished && !pending.is_empty() {
-            let _ = process_sse_line(&app, &id, &payload.model, &pending, &mut has_content)?;
+            if process_sse_line(&app, &id, &payload.model, &pending, &mut has_content, &mut saw_finish_reason)?.is_some() {
+                finished = true;
+            }
+        }
+        // OpenAI-compatible gateways may emit finish_reason before a final usage-only
+        // chunk, followed by [DONE]. Continue reading so that cache/input/output
+        // counters are not lost. A finish_reason alone is accepted at EOF.
+        if !finished && saw_finish_reason {
+            finished = true;
         }
 
         if !cancelled && !finished {
