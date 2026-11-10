@@ -695,8 +695,8 @@ export default function App() {
                 : firstAnswerToken
                   ? appendProcessStep(message.processSteps, "Menyusun jawaban akhir")
                   : message.processSteps,
-              thoughtDurationMs: firstAnswerToken && message.startedAtMs
-                ? Math.max(0, Date.now() - message.startedAtMs)
+              thoughtDurationMs: firstAnswerToken && (message.inferenceStartedAtMs || message.startedAtMs)
+                ? Math.max(0, Date.now() - (message.inferenceStartedAtMs || message.startedAtMs!))
                 : message.thoughtDurationMs,
               activity: e.content
                 ? undefined
@@ -1194,6 +1194,10 @@ export default function App() {
         return false;
       }
 
+      const inferenceStartedAtMs = Date.now();
+      setMessages((current) => current.map((message) => message.id === msgId
+        ? { ...message, inferenceStartedAtMs, processSteps: appendProcessStep(message.processSteps, "Memulai proses generasi model") }
+        : message));
       let id: string | null = null;
       try {
         if (provider === "9router") {
@@ -1424,6 +1428,10 @@ export default function App() {
           return;
         }
 
+        const inferenceStartedAtMs = Date.now();
+        setMessages((current) => current.map((message) => message.id === msgId
+          ? { ...message, inferenceStartedAtMs, processSteps: appendProcessStep(message.processSteps, "Memulai proses generasi model") }
+          : message));
         let id: string | null = null;
         if (provider === "9router") {
           id = await invokeRouterChatStart({
