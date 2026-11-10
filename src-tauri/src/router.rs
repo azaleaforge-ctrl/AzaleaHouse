@@ -383,7 +383,7 @@ async fn router_worker(
     }
 
     // Provider models own their output budget. No local Ollama token cap is sent.
-    let body = build_chat_completion_body(&payload.model, messages, &payload.options);
+    let mut body = build_chat_completion_body(&payload.model, messages, &payload.options);
 
     let cancel = cancel;
     tokio::pin!(cancel);
@@ -396,12 +396,36 @@ async fn router_worker(
             .json(&body)
             .send();
         tokio::pin!(request);
-        let response = tokio::select! {
+        let mut response = tokio::select! {
             biased;
             _ = &mut cancel => return Ok::<(), String>(()),
             response = &mut request => response
                 .map_err(|error| format!("Koneksi chat 9Router gagal: {error}"))?,
         };
+
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let detail = response.text().await.unwrap_or_default();
+            let lower = detail.to_ascii_lowercase();
+            if lower.contains("stream_options") || lower.contains("include_usage") {
+                if let Some(object) = body.as_object_mut() {
+                    object.remove("stream_options");
+                }
+                let retry = client
+                    .post(format!("{ROUTER_BASE}/chat/completions"))
+                    .bearer_auth(&api_key)
+                    .json(&body)
+                    .send();
+                tokio::pin!(retry);
+                response = tokio::select! {
+                    biased;
+                    _ = &mut cancel => return Ok::<(), String>(()),
+                    response = &mut retry => response
+                        .map_err(|error| format!("Retry chat 9Router tanpa stream usage gagal: {error}"))?,
+                };
+            } else {
+                return Err(format!("9Router mengembalikan HTTP 400: {}", detail.chars().take(1000).collect::<String>()));
+            }
+        }
 
         let status = response.status();
         if !status.is_success() {
