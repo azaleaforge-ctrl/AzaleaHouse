@@ -23,6 +23,7 @@ export function CommandDialog({
   onModelChange,
   onConnect,
   onDisconnect,
+  onRefreshModels,
   onOpenSession,
   onDeleteSession,
 }: {
@@ -40,6 +41,7 @@ export function CommandDialog({
   onModelChange: (model: string) => void;
   onConnect: (apiKey: string) => Promise<void>;
   onDisconnect: () => void;
+  onRefreshModels: () => void;
   onOpenSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
 }) {
@@ -120,7 +122,10 @@ export function CommandDialog({
                   {models.length === 0 ? <option value="">Belum ada model tersedia</option> : null}
                   {models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
                 </select>
-                <p className="command-hint">{models.length} model tersedia dari provider yang dipilih.</p>
+                <div className="command-model-footer">
+                  <p className="command-hint">{models.length} model tersedia dari provider yang dipilih.</p>
+                  {provider === "9router" ? <button type="button" className="btn" onClick={onRefreshModels}>Refresh models</button> : null}
+                </div>
               </>
             )}
           </div>
