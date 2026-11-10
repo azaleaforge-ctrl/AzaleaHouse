@@ -1509,3 +1509,11 @@
 
 .image-model-override { display: flex; align-items: center; gap: 8px; margin: 9px 0 5px; color: var(--color-text-muted); font-size: 11px; }
 .image-model-override input { accent-color: var(--color-peach-400); }
+
+.studio-mode-tabs { display: flex; gap: 8px; margin: 8px 0 14px; padding: 4px; width: fit-content; max-width: 100%; border: 1px solid var(--glass-border); border-radius: 999px; background: var(--glass-bg); }
+.studio-mode-tab { border: 0; border-radius: 999px; padding: 8px 13px; background: transparent; color: var(--color-text-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.studio-mode-tab.active { background: var(--glass-bg-strong); color: var(--color-text); box-shadow: 0 2px 12px rgba(0,0,0,.12); }
+.video-studio-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 10px 0; }
+.video-studio-options label { display: flex; flex-direction: column; gap: 6px; color: var(--color-text-muted); font-size: 11px; }
+.generated-video { display: block; width: min(100%, 900px); max-height: 70vh; background: #080808; border-radius: var(--radius-md); }
+@media (max-width: 640px) { .video-studio-options { grid-template-columns: 1fr; } }
