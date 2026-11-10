@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.2.2";
+export const FALLBACK_VERSION = "0.2.3";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -93,6 +93,16 @@ export const suggestions: Suggestion[] = [
     desc: "Pecah proyek besar menjadi langkah yang jelas.",
     prompt: "Bantu aku menyusun rencana kerja mingguan untuk proyek redesign website.",
   },
+];
+
+export const changelogV023: string[] = [
+  "Perbaikan chat provider 9Router: parser menerima streaming OpenAI-compatible, JSON completion non-streaming, dan beberapa bentuk content yang umum.",
+  "Batas output token tidak lagi dikirim ke model provider. Pengaturan Batas output hanya berlaku untuk Ollama lokal.",
+  "Quick Chat, Balanced, dan Deep Analysis kini mengirim instruksi profil yang sesuai saat chat baru maupun regenerate.",
+  "Indikator proses menampilkan tahap persiapan konteks, pencarian, atau analisis; indikator otomatis diganti oleh jawaban ketika teks pertama tiba.",
+  "Raw chain-of-thought tidak ditampilkan. Aplikasi hanya menampilkan status proses yang aman dan jawaban akhir.",
+  "Stream kosong atau format provider yang tidak kompatibel sekarang menghasilkan pesan error yang jelas, bukan bubble kosong dengan caret berkedip.",
+  "Caret vertikal streaming dihilangkan dari bubble jawaban.",
 ];
 
 export const changelogV022: string[] = [
