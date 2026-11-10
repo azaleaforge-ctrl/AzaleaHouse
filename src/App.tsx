@@ -137,6 +137,21 @@ function appendProcessStep(steps: string[] | undefined, step: string): string[] 
   return [...(steps ?? []), step].slice(-12);
 }
 
+function mergeProviderUsage(previous: Message["usage"], incoming: Message["usage"]): Message["usage"] {
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+  // Provider gateways may send input/output/cache counters in separate
+  // cumulative chunks. Merge monotonically so a partial usage event cannot
+  // erase a counter received in an earlier chunk.
+  return {
+    input_tokens: Math.max(previous.input_tokens, incoming.input_tokens),
+    output_tokens: Math.max(previous.output_tokens, incoming.output_tokens),
+    total_tokens: Math.max(previous.total_tokens, incoming.total_tokens),
+    cache_read_tokens: Math.max(previous.cache_read_tokens, incoming.cache_read_tokens),
+    cache_creation_tokens: Math.max(previous.cache_creation_tokens, incoming.cache_creation_tokens),
+  };
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, theme: "dark", blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
@@ -674,7 +689,7 @@ export default function App() {
             return {
               ...message,
               text: e.content ? message.text + e.content : message.text,
-              usage: e.usage ?? message.usage,
+              usage: mergeProviderUsage(message.usage, e.usage),
               processSteps: e.thinking
                 ? appendProcessStep(message.processSteps, "Model sedang melakukan penalaran")
                 : firstAnswerToken
