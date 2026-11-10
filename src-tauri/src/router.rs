@@ -1290,6 +1290,86 @@ fn sniff_image_mime(bytes: &[u8], fallback: &'static str) -> &'static str {
     else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" { "image/webp" }
     else { fallback }
 }
+fn is_codex_image_model(model: &str) -> bool {
+    let id = model.to_ascii_lowercase();
+    id.starts_with("cx/")
+        || id.contains("codex")
+        || id.contains("gpt-5.4-image")
+        || id.contains("gpt-image")
+}
+
+fn codex_image_result(value: &serde_json::Value) -> Option<(String, Option<String>)> {
+    fn visit(value: &serde_json::Value) -> Option<(String, Option<String>)> {
+        if let Some(object) = value.as_object() {
+            if object.get("type").and_then(|v| v.as_str()) == Some("image_generation_call") {
+                if let Some(result) = object.get("result").and_then(|v| v.as_str()) {
+                    if !result.trim().is_empty() {
+                        let format = object.get("output_format").and_then(|v| v.as_str()).map(str::to_owned);
+                        return Some((result.to_owned(), format));
+                    }
+                }
+            }
+            for child in object.values() {
+                if let Some(found) = visit(child) { return Some(found); }
+            }
+        } else if let Some(array) = value.as_array() {
+            for child in array {
+                if let Some(found) = visit(child) { return Some(found); }
+            }
+        }
+        None
+    }
+    visit(value)
+}
+
+fn decode_codex_image_result(encoded: &str, output_format: Option<&str>) -> Result<GeneratedImage, String> {
+    let mut encoded = encoded.trim();
+    let mut mime = match output_format.map(str::to_ascii_lowercase).as_deref() {
+        Some("jpeg") | Some("jpg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        _ => "image/png",
+    };
+    if let Some((header, data)) = encoded.split_once(',') {
+        if header.starts_with("data:image/") {
+            mime = normalize_image_mime(Some(header.trim_start_matches("data:")));
+            encoded = data;
+        }
+    }
+    if encoded.is_empty() || encoded.len() > 32 * 1024 * 1024 {
+        return Err("Hasil gambar Codex kosong atau melebihi batas Base64 32 MiB.".to_owned());
+    }
+    let bytes = STANDARD.decode(encoded)
+        .map_err(|_| "Data gambar Codex bukan Base64 yang valid.".to_owned())?;
+    if bytes.is_empty() || bytes.len() > 24 * 1024 * 1024 {
+        return Err("Ukuran gambar Codex kosong atau melebihi batas 24 MiB.".to_owned());
+    }
+    let detected = sniff_image_mime(&bytes, mime);
+    Ok(GeneratedImage { mime_type: detected.to_owned(), base64: STANDARD.encode(bytes) })
+}
+
+fn codex_image_result_from_sse(raw: &[u8]) -> Result<GeneratedImage, String> {
+    let text = String::from_utf8_lossy(raw);
+    let mut last_error: Option<String> = None;
+    for line in text.lines() {
+        let Some(data) = line.trim().strip_prefix("data:") else { continue };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" { continue; }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+        if let Some((encoded, format)) = codex_image_result(&value) {
+            return decode_codex_image_result(&encoded, format.as_deref());
+        }
+        if let Some(error) = value.get("error") {
+            last_error = Some(error.as_str().map(str::to_owned).unwrap_or_else(|| error.to_string()));
+        }
+        if let Some(error) = value.pointer("/response/error") {
+            last_error = Some(error.get("message").and_then(|v| v.as_str())
+                .map(str::to_owned).unwrap_or_else(|| error.to_string()));
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "Stream Codex tidak menyertakan hasil image_generation_call final. Pastikan akun 9Router memiliki akses image generation Codex.".to_owned()))
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub async fn router_generate_image(
     credentials: State<'_, RouterCredentials>,
