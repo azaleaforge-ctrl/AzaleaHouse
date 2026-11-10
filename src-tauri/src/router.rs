@@ -53,12 +53,7 @@ pub struct RouterMessage {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct RouterOptions {
-    #[serde(default)]
-    pub temperature: Option<f32>,
-    #[serde(default)]
-    pub top_p: Option<f32>,
-}
+pub struct RouterOptions {}
 
 #[derive(Deserialize)]
 pub struct RouterChatRequest {
@@ -295,12 +290,6 @@ fn build_chat_completion_body(
         "stream": true,
         "stream_options": { "include_usage": true }
     });
-    if let Some(value) = options.temperature {
-        body["temperature"] = serde_json::json!(value.clamp(0.0, 2.0));
-    }
-    if let Some(value) = options.top_p {
-        body["top_p"] = serde_json::json!(value.clamp(0.0, 1.0));
-    }
     body
 }
 
@@ -667,10 +656,7 @@ mod chat_stream_tests {
 
     #[test]
     fn provider_request_does_not_include_a_local_output_token_limit() {
-        let options = super::RouterOptions {
-            temperature: Some(0.7),
-            top_p: Some(0.9),
-        };
+        let options = super::RouterOptions {};
         let body = super::build_chat_completion_body(
             "provider/model",
             vec![json!({"role": "user", "content": "hello"})],
@@ -679,8 +665,8 @@ mod chat_stream_tests {
         assert_eq!(body.get("stream").and_then(|value| value.as_bool()), Some(true));
         assert!(body.get("max_tokens").is_none());
         assert!(body.get("max_completion_tokens").is_none());
-        let temperature = body.get("temperature").and_then(|value| value.as_f64()).expect("temperature sent");
-        assert!((temperature - 0.7).abs() < 1e-6);
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
     }
 
     #[test]
