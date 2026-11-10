@@ -672,6 +672,12 @@ export async function invokeList9RouterModels(): Promise<RouterModel[]> {
   return await invoke<RouterModel[]>("list_9router_models");
 }
 
+export async function invokeList9RouterImageModels(): Promise<RouterModel[]> {
+  if (!isTauri()) throw new Error("Katalog model gambar 9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<RouterModel[]>("list_9router_image_models");
+}
+
 export async function invokeDisconnect9Router(): Promise<void> {
   if (!isTauri()) throw new Error("9Router hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");
