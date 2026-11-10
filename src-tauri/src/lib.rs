@@ -2,6 +2,7 @@ mod document;
 mod fs;
 mod hardware;
 mod ollama;
+mod router;
 mod updater;
 
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ pub fn run() {
         .manage(ActiveStreams(std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()))))
         .manage(RuntimeOperationLock(std::sync::Arc::new(tokio::sync::Mutex::new(()))))
         .manage(updater::DownloadToken::default())
+        .manage(router::RouterCredentials::default())
         .manage(fs::MemoryPathSelection::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
@@ -32,6 +34,14 @@ pub fn run() {
             ollama::chat_cancel,
             ollama::load_model,
             ollama::unload_model,
+            // OpenAI-compatible local 9Router provider
+            router::connect_9router,
+            router::list_9router_models,
+            router::disconnect_9router,
+            router::router_chat_start,
+            router::web_search,
+            router::router_vision_describe,
+            router::router_generate_image,
             // Phase 4: Local storage & .AzaleaMemory
             fs::memory_path,
             fs::ensure_memory_dir,
@@ -51,12 +61,14 @@ pub fn run() {
             fs::load_attachment_base64,
             // Phase 6: Local document engine
             document::create_document_docx,
+            document::create_document_pptx,
             document::open_documents_folder,
             // Legacy arbitrary-path reader/encoder commands remain unregistered.
 
             // Phase 7: Version Center & Manual Updater
             updater::check_update,
             updater::download_update,
+            updater::install_update,
             updater::cancel_download,
         ])
         .run(tauri::generate_context!())

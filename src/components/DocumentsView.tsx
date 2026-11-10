@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { invokeCreateDocumentDocx, invokeOpenDocumentsFolder } from "../lib/tauri";
+import { invokeCreateDocumentDocx, invokeCreateDocumentPptx, invokeOpenDocumentsFolder } from "../lib/tauri";
 import "./DocumentsView.css";
 
 type PreviewBlock =
@@ -165,13 +165,19 @@ function DocumentPreview({ title, markdown }: { title: string; markdown: string 
   );
 }
 
-export function DocumentsView() {
+export function DocumentsView({ lastAssistantMessage, lastUserPrompt }: { lastAssistantMessage: string; lastUserPrompt: string }) {
   const [title, setTitle] = useState("Dokumen Baru");
   const [markdown, setMarkdown] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
 
   const readyToExport = title.trim().length > 0 && markdown.trim().length > 0 && !busy;
+  function importLatestAnswer() {
+    if (!lastAssistantMessage.trim()) return;
+    setMarkdown(lastAssistantMessage.trim());
+    setTitle(lastUserPrompt.trim().slice(0, 80) || "Dokumen dari AI");
+    setNotice({ kind: "info", text: "Jawaban AI terakhir dimasukkan ke editor. Periksa format dan isi sebelum ekspor." });
+  }
   const characterCount = markdown.length.toLocaleString("id-ID");
 
   async function saveDocx() {
@@ -188,6 +194,26 @@ export function DocumentsView() {
       setNotice({
         kind: "error",
         text: error instanceof Error ? error.message : "Dokumen DOCX gagal dibuat.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePptx() {
+    if (!readyToExport) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const file = await invokeCreateDocumentPptx(title, markdown);
+      setNotice({
+        kind: "success",
+        text: "PPTX berhasil dibuat: " + file.fileName + " · " + (file.size / 1024).toFixed(1) + " KB. Lokasi: " + file.path,
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Presentasi PPTX gagal dibuat.",
       });
     } finally {
       setBusy(false);
@@ -220,13 +246,17 @@ export function DocumentsView() {
     <section className="document-studio" aria-label="Studio dokumen">
       <header className="document-studio-header document-no-print">
         <div>
-          <span className="document-eyebrow">PRD Phase 6 · Document Engine</span>
+          <span className="document-eyebrow">PRD Phase 6 · DOCX / PDF / PPTX Engine</span>
           <h1>Studio Dokumen</h1>
-          <p>Buat DOCX lokal dengan struktur yang konsisten, atau simpan pratinjau sebagai PDF melalui dialog cetak Windows.</p>
+          <p>Buat DOCX dan PPTX lokal dengan struktur konsisten, atau simpan pratinjau sebagai PDF melalui dialog cetak Windows.</p>
         </div>
         <div className="document-studio-actions">
+          <button type="button" className="btn btn--ghost" onClick={importLatestAnswer} disabled={!lastAssistantMessage.trim()}>Gunakan jawaban AI terakhir</button>
           <button type="button" className="btn btn--ghost" onClick={openFolder}>Buka folder</button>
           <button type="button" className="btn btn--ghost" onClick={savePdf} disabled={!readyToExport}>Cetak / Simpan PDF</button>
+          <button type="button" className="btn btn--ghost" onClick={savePptx} disabled={!readyToExport}>
+            {busy ? "Membuat file…" : "Simpan PPTX"}
+          </button>
           <button type="button" className="btn btn--primary" onClick={saveDocx} disabled={!readyToExport}>
             {busy ? "Membuat DOCX…" : "Simpan DOCX"}
           </button>

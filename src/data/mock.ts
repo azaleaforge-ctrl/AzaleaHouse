@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.2.0";
+export const FALLBACK_VERSION = "0.2.1";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -93,6 +93,15 @@ export const suggestions: Suggestion[] = [
     desc: "Pecah proyek besar menjadi langkah yang jelas.",
     prompt: "Bantu aku menyusun rencana kerja mingguan untuk proyek redesign website.",
   },
+];
+
+export const changelogV021: string[] = [
+  "Provider AI 9Router: endpoint lokal OpenAI-compatible, API key manual, daftar model dari /v1/models, refresh model, dan pergantian provider.",
+  "Perintah slash /sessions, /model, dan /connect dengan dialog terpusat; sesi dapat dibuka dan dihapus.",
+  "Generasi dapat dihentikan melalui tombol Stop atau tombol Escape.",
+  "Enam skill otomatis: Lazy Dev, Quick Response, File Analysis, Web Research, Document Engine, dan Thinking Adapter.",
+  "Tools: Web Search, Vision Bridge, ekspor DOCX/PDF/PPTX, dan Image Studio untuk endpoint image generation yang kompatibel.",
+  "Version Center dapat menjalankan installer yang telah diunduh setelah pemeriksaan file dan konfirmasi manual.",
 ];
 
 export const changelogV020: string[] = [

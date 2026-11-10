@@ -430,7 +430,7 @@ fn core_properties_xml(title: &str) -> String {
 fn app_properties_xml() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
-  <Application>AzaleaHouse</Application><AppVersion>0.1.3</AppVersion>
+  <Application>AzaleaHouse</Application><AppVersion>0.2.1</AppVersion>
 </Properties>"#
 }
 
@@ -521,6 +521,233 @@ fn make_stored_zip(entries: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, String> {
     push_u16(&mut output, 0);
 
     Ok(output)
+}
+
+#[derive(Debug)]
+struct PresentationSlide {
+    title: String,
+    lines: Vec<String>,
+}
+
+fn parse_presentation_slides(title: &str, markdown: &str) -> Vec<PresentationSlide> {
+    let mut slides = Vec::<PresentationSlide>::new();
+    let mut current_title = title.trim().to_owned();
+    let mut current_lines = Vec::<String>::new();
+
+    let flush = |slides: &mut Vec<PresentationSlide>, title: &mut String, lines: &mut Vec<String>| {
+        if !title.trim().is_empty() || !lines.is_empty() {
+            let slide_number = slides.len() + 1;
+            let slide_title = if title.trim().is_empty() {
+                format!("Slide {slide_number}")
+            } else {
+                title.trim().to_owned()
+            };
+            slides.push(PresentationSlide {
+                title: slide_title,
+                lines: std::mem::take(lines),
+            });
+            *title = format!("Slide {}", slides.len() + 1);
+        }
+    };
+
+    for raw in markdown.replace("\r\n", "\n").replace('\r', "\n").lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "[[SLIDE]]" || line == "[[PAGEBREAK]]" || line == "---" {
+            flush(&mut slides, &mut current_title, &mut current_lines);
+            continue;
+        }
+        if let Some(heading) = line.strip_prefix("# ") {
+            if current_lines.is_empty() && current_title == title.trim() && slides.is_empty() {
+                current_title = heading.trim().to_owned();
+            } else {
+                flush(&mut slides, &mut current_title, &mut current_lines);
+                current_title = heading.trim().to_owned();
+            }
+            continue;
+        }
+        if let Some(heading) = line.strip_prefix("## ").or_else(|| line.strip_prefix("### ")) {
+            current_lines.push(heading.trim().to_owned());
+            continue;
+        }
+        if let Some(item) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")).or_else(|| line.strip_prefix("+ ")) {
+            current_lines.push("• ".to_owned() + item.trim());
+            continue;
+        }
+        if let Some((digits, rest)) = line.split_once(". ") {
+            if !digits.is_empty() && digits.chars().all(|value| value.is_ascii_digit()) {
+                current_lines.push(digits.to_owned() + ". " + rest.trim());
+                continue;
+            }
+        }
+        current_lines.push(line.to_owned());
+    }
+    flush(&mut slides, &mut current_title, &mut current_lines);
+
+    if slides.is_empty() {
+        slides.push(PresentationSlide {
+            title: title.trim().to_owned(),
+            lines: vec!["Tulis konten slide di Studio Dokumen untuk membuat presentasi.".to_owned()],
+        });
+    }
+    slides.truncate(30);
+    for slide in &mut slides {
+        slide.lines.truncate(24);
+        for line in &mut slide.lines {
+            if line.chars().count() > 260 {
+                *line = line.chars().take(257).collect::<String>() + "…";
+            }
+        }
+    }
+    slides
+}
+
+fn slide_text_shape(
+    id: u32,
+    name: &str,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    text: &str,
+    font_size: u32,
+    bold: bool,
+    color: &str,
+) -> String {
+    let bold_attribute = if bold { " b=\"1\"" } else { "" };
+    format!(
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{name}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{width}" cy="{height}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" rIns="0" tIns="0" bIns="0" anchor="ctr"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="l"/><a:r><a:rPr lang="id-ID" sz="{font_size}"{bold_attribute}><a:solidFill><a:srgbClr val="{color}"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t xml:space="preserve">{}</a:t></a:r><a:endParaRPr lang="id-ID" sz="{font_size}"/></a:p></p:txBody></p:sp>"#,
+        escape_xml(text)
+    )
+}
+
+fn presentation_slide_xml(slide: &PresentationSlide) -> String {
+    let mut shapes = String::from(
+        r#"<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>"#
+    );
+    shapes.push_str(&slide_text_shape(2, "Title", 914400, 600000, 10363200, 1000000, &slide.title, 3000, true, "293A65"));
+    if slide.lines.is_empty() {
+        shapes.push_str(&slide_text_shape(3, "Body", 1000000, 1900000, 10300000, 3900000, "Tambahkan poin utama untuk slide ini.", 1900, false, "34384A"));
+    } else {
+        let mut body_paragraphs = String::new();
+        for line in &slide.lines {
+            body_paragraphs.push_str(&format!(
+                r#"<a:p><a:pPr marL="254000" indent="-180000" lvl="0"><a:buNone/></a:pPr><a:r><a:rPr lang="id-ID" sz="1900"><a:solidFill><a:srgbClr val="34384A"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t xml:space="preserve">{}</a:t></a:r><a:endParaRPr lang="id-ID" sz="1900"/></a:p>"#,
+                escape_xml(line)
+            ));
+        }
+        shapes.push_str(&format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="1050000" y="1900000"/><a:ext cx="10200000" cy="4100000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" rIns="0" tIns="0" bIns="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/>{body_paragraphs}</p:txBody></p:sp>"#
+        ));
+    }
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FBF9FF"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree>{shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#
+    )
+}
+
+fn presentation_content_types(slide_count: usize) -> String {
+    let mut overrides = String::new();
+    overrides.push_str(r#"<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>"#);
+    overrides.push_str(r#"<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>"#);
+    for index in 1..=slide_count {
+        overrides.push_str(&format!(
+            r#"<Override PartName="/ppt/slides/slide{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#
+        ));
+    }
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>{overrides}</Types>"#
+    )
+}
+
+fn presentation_xml(slide_count: usize) -> String {
+    let ids = (0..slide_count)
+        .map(|index| format!(r#"<p:sldId id="{}" r:id="rId{}"/>"#, 256 + index, 2 + index))
+        .collect::<String>();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>{ids}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle><a:defPPr><a:defRPr lang="id-ID"/></a:defPPr></p:defaultTextStyle></p:presentation>"#
+    )
+}
+
+fn presentation_relationships(slide_count: usize) -> String {
+    let mut relationships = String::from(
+        r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>"#
+    );
+    for index in 1..=slide_count {
+        relationships.push_str(&format!(
+            r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{index}.xml"/>"#,
+            index + 1
+        ));
+    }
+    relationships.push_str(r#"<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/><Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/><Relationship Id="rId101" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>"#);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{relationships}</Relationships>"#
+    )
+}
+
+fn slide_master_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr sz="3000" b="1"/></a:lvl1pPr></p:titleStyle><p:bodyStyle><a:lvl1pPr><a:defRPr sz="1900"/></a:lvl1pPr></p:bodyStyle><p:otherStyle><a:defPPr><a:defRPr sz="1800"/></a:defPPr></p:otherStyle></p:txStyles></p:sldMaster>"#
+}
+
+fn slide_layout_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1"><p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"#
+}
+
+fn slide_master_relationships_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>"#
+}
+
+fn slide_layout_relationships_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>"#
+}
+
+fn slide_relationships_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#
+}
+
+fn presentation_theme_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="AzaleaHouse"><a:themeElements><a:clrScheme name="Azalea"><a:dk1><a:srgbClr val="252A40"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="293A65"/></a:dk2><a:lt2><a:srgbClr val="FBF9FF"/></a:lt2><a:accent1><a:srgbClr val="E99B74"/></a:accent1><a:accent2><a:srgbClr val="8E85C5"/></a:accent2><a:accent3><a:srgbClr val="83BDA6"/></a:accent3><a:accent4><a:srgbClr val="E3C16F"/></a:accent4><a:accent5><a:srgbClr val="D98D9D"/></a:accent5><a:accent6><a:srgbClr val="6E9CB9"/></a:accent6><a:hlink><a:srgbClr val="5677C8"/></a:hlink><a:folHlink><a:srgbClr val="8E85C5"/></a:folHlink></a:clrScheme><a:fontScheme name="AzaleaFonts"><a:majorFont><a:latin typeface="Aptos Display"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/></a:minorFont></a:fontScheme><a:fmtScheme name="AzaleaFormat"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"/></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs></a:gsLst><a:lin ang="0" scaled="1"/></a:gradFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#
+}
+
+fn make_pptx(title: &str, markdown: &str) -> Result<Vec<u8>, String> {
+    let slides = parse_presentation_slides(title, markdown);
+    let mut entries = vec![
+        ("[Content_Types].xml".to_owned(), presentation_content_types(slides.len()).into_bytes()),
+        ("_rels/.rels".to_owned(), r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>"#.as_bytes().to_vec()),
+        ("ppt/presentation.xml".to_owned(), presentation_xml(slides.len()).into_bytes()),
+        ("ppt/_rels/presentation.xml.rels".to_owned(), presentation_relationships(slides.len()).into_bytes()),
+        ("ppt/slideMasters/slideMaster1.xml".to_owned(), slide_master_xml().as_bytes().to_vec()),
+        ("ppt/slideMasters/_rels/slideMaster1.xml.rels".to_owned(), slide_master_relationships_xml().as_bytes().to_vec()),
+        ("ppt/slideLayouts/slideLayout1.xml".to_owned(), slide_layout_xml().as_bytes().to_vec()),
+        ("ppt/slideLayouts/_rels/slideLayout1.xml.rels".to_owned(), slide_layout_relationships_xml().as_bytes().to_vec()),
+        ("ppt/theme/theme1.xml".to_owned(), presentation_theme_xml().as_bytes().to_vec()),
+        ("ppt/presProps.xml".to_owned(), r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presProps xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#.as_bytes().to_vec()),
+        ("ppt/viewProps.xml".to_owned(), r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:viewPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:normalViewPr/><p:slideViewPr/><p:notesTextViewPr/><p:gridSpacing cx="914400" cy="914400"/></p:viewPr>"#.as_bytes().to_vec()),
+        ("ppt/tableStyles.xml".to_owned(), r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"/>"#.as_bytes().to_vec()),
+        ("docProps/core.xml".to_owned(), core_properties_xml(title).into_bytes()),
+        ("docProps/app.xml".to_owned(), app_properties_xml().as_bytes().to_vec()),
+    ];
+    for (index, slide) in slides.iter().enumerate() {
+        let number = index + 1;
+        entries.push((
+            format!("ppt/slides/slide{number}.xml"),
+            presentation_slide_xml(slide).into_bytes(),
+        ));
+        entries.push((
+            format!("ppt/slides/_rels/slide{number}.xml.rels"),
+            slide_relationships_xml().as_bytes().to_vec(),
+        ));
+    }
+    make_stored_zip(entries)
 }
 
 fn make_docx(title: &str, markdown: &str) -> Result<Vec<u8>, String> {
@@ -663,6 +890,64 @@ pub async fn create_document_docx(draft: DocumentDraft) -> Result<SavedDocumentF
 }
 
 #[tauri::command]
+pub async fn create_document_pptx(draft: DocumentDraft) -> Result<SavedDocumentFile, String> {
+    let title = draft.title.trim();
+    if title.is_empty() {
+        return Err("Judul presentasi wajib diisi.".to_owned());
+    }
+    if title.chars().count() > MAX_DOCUMENT_TITLE_CHARS {
+        return Err(format!("Judul presentasi maksimal {MAX_DOCUMENT_TITLE_CHARS} karakter."));
+    }
+    let markdown = draft.markdown.trim();
+    if markdown.is_empty() {
+        return Err("Isi presentasi masih kosong.".to_owned());
+    }
+    if markdown.chars().count() > MAX_DOCUMENT_CHARS {
+        return Err(format!("Isi presentasi melebihi batas {MAX_DOCUMENT_CHARS} karakter."));
+    }
+
+    let bytes = make_pptx(title, markdown)?;
+    let directory = documents_directory(true).await?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Waktu sistem tidak valid: {error}"))?
+        .as_millis();
+    let slug = title_slug(title);
+    let mut selected_path = None;
+
+    for sequence in 0u32..100 {
+        let suffix = if sequence == 0 { String::new() } else { format!("_{sequence}") };
+        let file_name = format!("{slug}_{now}{suffix}.pptx");
+        let path = directory.join(&file_name);
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path).await {
+            Ok(mut handle) => {
+                if let Err(error) = handle.write_all(&bytes).await {
+                    drop(handle);
+                    let _ = fs::remove_file(&path).await;
+                    return Err(format!("Gagal menulis presentasi PPTX: {error}"));
+                }
+                if let Err(error) = handle.flush().await {
+                    drop(handle);
+                    let _ = fs::remove_file(&path).await;
+                    return Err(format!("Gagal menyelesaikan file PPTX: {error}"));
+                }
+                selected_path = Some((file_name, path));
+                break;
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Gagal membuat file PPTX lokal: {error}")),
+        }
+    }
+
+    let (file_name, path) = selected_path
+        .ok_or_else(|| "Tidak dapat membuat nama file presentasi unik. Coba lagi.".to_owned())?;
+    Ok(SavedDocumentFile {
+        file_name,
+        path: path.to_string_lossy().to_string(),
+        size: bytes.len() as u64,
+    })
+}
+
+#[tauri::command]
 pub async fn open_documents_folder() -> Result<(), String> {
     let directory = documents_directory(true).await?;
     #[cfg(target_os = "windows")]
@@ -732,6 +1017,22 @@ mod tests {
         assert!(local_zip_entry(&bytes, "[Content_Types].xml").is_some());
         assert!(local_zip_entry(&bytes, "word/numbering.xml").is_some());
         assert!(local_zip_entry(&bytes, "word/footer1.xml").is_some());
+    }
+
+    #[test]
+    fn pptx_package_contains_presentation_and_slide_parts() {
+        let bytes = make_pptx("Riset & Presentasi", "# Ringkasan\n\n- Poin pertama\n- Poin kedua\n\n[[SLIDE]]\n# Kesimpulan\nSelesai.").expect("PPTX should be built");
+        assert!(bytes.starts_with(b"PK\x03\x04"));
+        let presentation = local_zip_entry(&bytes, "ppt/presentation.xml").expect("presentation.xml part");
+        let presentation = std::str::from_utf8(presentation).expect("XML must be UTF-8");
+        assert!(presentation.contains("screen16x9"));
+        assert!(presentation.contains("rId2"));
+        let slide = local_zip_entry(&bytes, "ppt/slides/slide1.xml").expect("slide1.xml part");
+        let slide = std::str::from_utf8(slide).expect("XML must be UTF-8");
+        assert!(slide.contains("Ringkasan"));
+        assert!(slide.contains("Poin pertama"));
+        assert!(local_zip_entry(&bytes, "ppt/slides/slide2.xml").is_some());
+        assert!(local_zip_entry(&bytes, "ppt/theme/theme1.xml").is_some());
     }
 
     #[test]

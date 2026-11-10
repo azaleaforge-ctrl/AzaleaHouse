@@ -140,7 +140,7 @@ export async function listenModelPullProgress(
 /** Payload chat ke Rust. */
 export interface ChatStartPayload {
   model: string;
-  messages: Array<{ role: string; content: string; images?: string[] }>;
+  messages: Array<{ role: string; content: string; images?: string[]; imageMimeTypes?: string[] }>;
   think: boolean;
   runtimePolicy: "auto" | "manual";
   options: {
@@ -629,4 +629,114 @@ export async function invokeLoadModel(
   } catch {
     return false;
   }
+}
+
+
+// ───────────────────────────────
+// 9Router provider + web search tools
+// ───────────────────────────────
+
+export interface RouterModel {
+  id: string;
+  name?: string | null;
+  context_length?: number | null;
+  owned_by?: string | null;
+}
+
+export interface RouterChatPayload {
+  model: string;
+  messages: Array<{ role: string; content: string; images?: string[]; imageMimeTypes?: string[] }>;
+  think: boolean;
+  options: {
+    temperature?: number;
+    num_predict?: number;
+    top_p?: number;
+  };
+  skillsPrompt?: string;
+}
+
+/** Connect to the local OpenAI-compatible 9Router gateway and validate the API key. */
+export async function invokeConnect9Router(apiKey: string): Promise<RouterModel[]> {
+  if (!isTauri()) throw new Error("Koneksi 9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<RouterModel[]>("connect_9router", { apiKey });
+}
+
+export async function invokeList9RouterModels(): Promise<RouterModel[]> {
+  if (!isTauri()) throw new Error("Daftar model 9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<RouterModel[]>("list_9router_models");
+}
+
+export async function invokeDisconnect9Router(): Promise<void> {
+  if (!isTauri()) throw new Error("9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("disconnect_9router");
+}
+
+export async function invokeRouterChatStart(payload: RouterChatPayload): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<string>("router_chat_start", { payload });
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export async function invokeWebSearch(query: string): Promise<WebSearchResult[]> {
+  if (!isTauri()) throw new Error("Pencarian web hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<WebSearchResult[]>("web_search", { query });
+}
+
+
+/** Launch the verified, downloaded official installer after explicit user approval. */
+export async function invokeInstallUpdate(): Promise<void> {
+  if (!isTauri()) throw new Error("Pemasangan pembaruan hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("install_update");
+}
+
+
+export async function invokeRouterVisionDescribe(args: {
+  model: string;
+  prompt: string;
+  images: string[];
+  imageMimeTypes: string[];
+}): Promise<string> {
+  if (!isTauri()) throw new Error("Vision helper hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<string>("router_vision_describe", { payload: args });
+}
+
+
+export interface GeneratedImage {
+  mimeType: string;
+  base64: string;
+}
+
+export async function invokeRouterGenerateImage(args: {
+  model: string;
+  prompt: string;
+  size: "1024x1024" | "1024x1536" | "1536x1024";
+}): Promise<GeneratedImage> {
+  if (!isTauri()) throw new Error("Image generation hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<GeneratedImage>("router_generate_image", { payload: args });
+}
+
+
+/** Render a Markdown draft into an editable PPTX inside .AzaleaMemory/documents. */
+export async function invokeCreateDocumentPptx(
+  title: string,
+  markdown: string,
+): Promise<SavedDocumentFile> {
+  if (!isTauri()) throw new Error("Pembuatan PPTX hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<SavedDocumentFile>("create_document_pptx", {
+    draft: { title, markdown },
+  });
 }

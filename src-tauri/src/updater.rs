@@ -1,6 +1,5 @@
-//! Temporary hardened manual-download bridge.
-//! This module is not an authenticated updater yet: installer execution is intentionally absent.
-//! Replace this bridge with the official Tauri updater plugin after a signing key is generated.
+//! Hardened manual GitHub Release download and explicitly approved installer launch.
+//! Release installers are unsigned; the UI displays that limitation before execution.
 
 use std::cmp::Ordering as VersionOrdering;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +24,7 @@ const MAX_INSTALLER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub struct DownloadToken {
     active: Arc<AtomicBool>,
     cancel_sender: Arc<StdMutex<Option<watch::Sender<bool>>>>,
+    downloaded_asset: Arc<StdMutex<Option<String>>>,
 }
 
 impl Default for DownloadToken {
@@ -32,6 +32,7 @@ impl Default for DownloadToken {
         Self {
             active: Arc::new(AtomicBool::new(false)),
             cancel_sender: Arc::new(StdMutex::new(None)),
+            downloaded_asset: Arc::new(StdMutex::new(None)),
         }
     }
 }
@@ -205,7 +206,7 @@ fn is_safe_installer_name(name: &str) -> bool {
 pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let client = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
-        .user_agent("AzaleaHouse/0.1")
+        .user_agent("AzaleaHouse/0.2.1")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
@@ -276,7 +277,7 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
         .collect();
 
     let error = if available && assets.is_empty() {
-        Some("Rilis terbaru tidak menyediakan installer Windows yang cocok dengan versi tag dan batas ukuran yang diharapkan. Instalasi tetap terkunci sampai verifikasi tanda tangan resmi tersedia.".to_string())
+        Some("Rilis terbaru tidak menyediakan installer Windows yang cocok dengan versi tag dan batas ukuran yang diharapkan.".to_string())
     } else {
         None
     };
@@ -434,8 +435,8 @@ async fn request_installer_response(
     Ok(fallback_response)
 }
 
-/// Download is manual and constrained to the official release. The output is not executable
-/// through this app until the official signed-updater flow is configured.
+/// Download is manual and constrained to the fixed official repository. A downloaded file
+/// can only be launched by install_update after path, type, size, and PE-header validation.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn download_update(
     app: AppHandle,
@@ -458,6 +459,7 @@ pub async fn download_update(
             return Err("Unduhan pembaruan lain masih berjalan.".to_string());
         }
         *current_sender = Some(cancel_sender);
+        *state.downloaded_asset.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
     let _download_guard = DownloadGuard {
         active: state.active.clone(),
@@ -474,7 +476,7 @@ pub async fn download_update(
         .read_timeout(Duration::from_secs(60))
         .timeout(Duration::from_secs(0))
         .no_gzip()
-        .user_agent("AzaleaHouse/0.1")
+        .user_agent("AzaleaHouse/0.2.1")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
@@ -593,11 +595,69 @@ pub async fn download_update(
         return Err(format!("Gagal menyelesaikan unduhan: {e}"));
     }
 
+    *state.downloaded_asset.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(asset_name.clone());
+
     let final_total = if total > 0 { total } else { downloaded };
     let _ = app.emit("azalea:update_progress", UpdateProgress {
         downloaded, total: final_total, speed: last_speed, eta_seconds: Some(0),
     });
     Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn install_update(
+    app: AppHandle,
+    state: State<'_, DownloadToken>,
+) -> Result<(), String> {
+    let asset_name = state.downloaded_asset
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "Installer belum diunduh pada sesi aplikasi ini. Unduh pembaruan terlebih dahulu.".to_string())?;
+
+    if !is_safe_installer_name(&asset_name) {
+        return Err("Nama installer yang akan dijalankan tidak valid.".to_string());
+    }
+
+    let cache_dir = crate::fs::resolve_memory_path().await.join("cache");
+    let path = cache_dir.join(&asset_name);
+    let metadata = fs::symlink_metadata(&path)
+        .await
+        .map_err(|error| format!("Installer tidak ditemukan di cache: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err("File installer bukan file reguler yang aman untuk dijalankan.".to_string());
+    }
+    if metadata.len() == 0 || metadata.len() > MAX_INSTALLER_BYTES {
+        return Err("Ukuran installer tidak valid.".to_string());
+    }
+
+    // Revalidate the PE header immediately before launch rather than trusting a stale UI state.
+    validate_pe_installer(&path).await?;
+
+    let canonical_cache = tokio::fs::canonicalize(&cache_dir)
+        .await
+        .map_err(|error| format!("Folder cache tidak valid: {error}"))?;
+    let canonical_installer = tokio::fs::canonicalize(&path)
+        .await
+        .map_err(|error| format!("Path installer tidak dapat divalidasi: {error}"))?;
+    if canonical_installer.parent() != Some(canonical_cache.as_path()) {
+        return Err("Lokasi installer berada di luar folder cache AzaleaHouse.".to_string());
+    }
+
+    // Installer is started only after the user presses Install in Version Center.
+    // Releases are currently unsigned; the UI explicitly warns about SmartScreen.
+    let mut command = std::process::Command::new(&canonical_installer);
+    command.current_dir(&canonical_cache);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command.spawn()
+        .map_err(|error| format!("Windows gagal menjalankan installer: {error}"))?;
+
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]

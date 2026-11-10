@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AiProvider,
   AiSettings,
   AppSettings,
   GenState,
@@ -11,7 +12,7 @@ import type {
 } from "./types";
 import type { Attachment } from "./types";
 import type { UpdateStatus } from "./types";
-import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload, ModelMeta } from "./lib/tauri";
+import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload, ModelMeta, RouterModel } from "./lib/tauri";
 import {
   FALLBACK_VERSION,
   MAX_FILE_BYTES,
@@ -38,6 +39,7 @@ import {
   invokeBackupMemory,
   invokeCheckUpdate,
   invokeDownloadUpdate,
+  invokeInstallUpdate,
   invokeCancelDownload,
   listenUpdateProgress,
   invokeUnloadModel,
@@ -45,6 +47,12 @@ import {
   invokeSaveAttachmentBytes,
   invokeLoadAttachmentBase64,
   listenChatEvents,
+  invokeConnect9Router,
+  invokeList9RouterModels,
+  invokeDisconnect9Router,
+  invokeRouterChatStart,
+  invokeWebSearch,
+  invokeRouterVisionDescribe,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackgroundLayer } from "./components/BackgroundLayer";
@@ -54,11 +62,14 @@ import { HistoryView } from "./components/HistoryView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
-import { ComingSoon } from "./components/ComingSoon";
 import { DocumentsView } from "./components/DocumentsView";
+import { ImageStudio } from "./components/ImageStudio";
 import { LocalAiView } from "./components/LocalAiView";
-import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
+import { buildSkillsPrompt, detectSkills } from "./data/skills";
+import type { SkillId } from "./data/skills";
+import { CommandDialog } from "./components/CommandDialog";
+import type { CommandDialogMode } from "./components/CommandDialog";
 
 function formatConversationTimestamp(value: string): string {
   const date = new Date(value);
@@ -92,10 +103,12 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
 
   return Promise.all(messages.map(async (message) => {
     let images: string[] | undefined;
+    let imageMimeTypes: string[] | undefined;
     const imageLimit = imageSlotsByMessage.get(message.id) ?? 0;
     if (message.role === "user" && selectedIds.has(message.id) && imageLimit > 0) {
       if (message.images?.length) {
         images = message.images.slice(0, imageLimit);
+        imageMimeTypes = (message.attachments ?? []).filter((attachment) => attachment.format === "image").slice(0, imageLimit).map((attachment) => attachment.mimeType || "image/png");
       } else {
         const imageAttachments = (message.attachments ?? [])
           .filter((attachment) => attachment.format === "image" && attachment.id)
@@ -105,13 +118,16 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
           return base64 ?? "";
         }));
         const available = loaded.filter(Boolean);
-        if (available.length) images = available;
+        if (available.length) {
+          images = available;
+          imageMimeTypes = imageAttachments.filter((_, index) => Boolean(loaded[index])).map((attachment) => attachment.mimeType || "image/png");
+        }
       }
     }
     return {
       role: message.role,
       content: message.text + (message.id === latestUser?.id ? attachmentContext : ""),
-      ...(images?.length ? { images } : {}),
+      ...(images?.length ? { images, imageMimeTypes } : {}),
     };
   }));
 }
@@ -120,6 +136,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, theme: "dark", blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
   ai: {
+    provider: "local",
+    localModel: "",
+    routerModel: "",
+    visionModel: "",
     thinking: false,
     model: "",
     runtimePolicy: "auto",
@@ -148,6 +168,12 @@ export default function App() {
     "runtime_unavailable",
   );
   const [localModels, setLocalModels] = useState<ModelMeta[]>([]);
+  const [routerModels, setRouterModels] = useState<RouterModel[]>([]);
+  const [routerConnected, setRouterConnected] = useState(false);
+  const [routerBusy, setRouterBusy] = useState(false);
+  const [routerError, setRouterError] = useState<string | null>(null);
+  const [commandDialog, setCommandDialog] = useState<CommandDialogMode | null>(null);
+  const [activeSkillIds, setActiveSkillIds] = useState<SkillId[]>([]);
   const [modelListError, setModelListError] = useState<string | null>(null);
   const [systemReduced, setSystemReduced] = useState(false);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
@@ -225,11 +251,14 @@ export default function App() {
   const lastActivityRef = useRef(Date.now());
   const runtimeOperationRef = useRef(false);
   const selectedModelRef = useRef(settings.ai.model);
+  const selectedProviderRef = useRef(settings.ai.provider);
+  const routerConnectedRef = useRef(routerConnected);
   const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
   const previousRuntimeGenStateRef = useRef<GenState>("idle");
   const memoryReadyRef = useRef(false);
   const memoryOperationRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
+  const visionCacheRef = useRef<Map<string, string>>(new Map());
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceTimerRef = useRef<number | null>(null);
   const skipNextPersistenceRef = useRef(false);
@@ -279,9 +308,16 @@ export default function App() {
 
   useEffect(() => {
     selectedModelRef.current = settings.ai.model;
-  }, [settings.ai.model]);
+    selectedProviderRef.current = settings.ai.provider;
+    routerConnectedRef.current = routerConnected;
+  }, [settings.ai.model, settings.ai.provider, routerConnected]);
 
   const refreshRuntimeStatus = useCallback(async () => {
+    if (selectedProviderRef.current === "9router") {
+      const status = routerConnectedRef.current ? "ready" : "runtime_unavailable";
+      setRuntimeStatus(status);
+      return status;
+    }
     const modelId = selectedModelRef.current;
     const status = await invokeRuntimeStatus(modelId);
     if (selectedModelRef.current === modelId) {
@@ -361,6 +397,18 @@ export default function App() {
           }
           // Drop the previous mock default; installed models now come only from Ollama.
           if (savedAi.model === "gemma4:e2b") savedAi.model = "";
+          const savedProvider = savedAi.provider === "9router" ? "9router" : "local";
+          const legacyModel = typeof savedAi.model === "string" ? savedAi.model : "";
+          if (typeof savedAi.localModel !== "string") savedAi.localModel = savedProvider === "local" ? legacyModel : "";
+          if (typeof savedAi.routerModel !== "string") savedAi.routerModel = savedProvider === "9router" ? legacyModel : "";
+          // 9Router credentials are intentionally session-only; do not restore an unconnected provider as active.
+          if (savedProvider === "9router") {
+            savedAi.provider = "local";
+            savedAi.model = savedAi.localModel;
+          } else {
+            savedAi.provider = "local";
+            savedAi.model = savedAi.localModel;
+          }
           setSettings((current) => ({
             ...current,
             ai: { ...current.ai, ...savedAi },
@@ -418,6 +466,10 @@ export default function App() {
   // ── Fetch runtime status on mount & model change ──
   useEffect(() => {
     let alive = true;
+    if (settings.ai.provider === "9router") {
+      setRuntimeStatus(routerConnected ? "ready" : "runtime_unavailable");
+      return () => { alive = false; };
+    }
     setRuntimeStatus("loading");
     invokeRuntimeStatus(settings.ai.model).then((status) => {
       if (!alive) return;
@@ -432,7 +484,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [settings.ai.model]);
+  }, [settings.ai.model, settings.ai.provider, routerConnected]);
 
   // Refresh model state once a chat ends. A request that starts from "unloaded"
   // still leaves a resident model, and that status is needed to arm the idle timer.
@@ -440,18 +492,23 @@ export default function App() {
     const previous = previousRuntimeGenStateRef.current;
     previousRuntimeGenStateRef.current = genState;
     if (previous !== "generating" || genState !== "idle") return;
-
+    if (settings.ai.provider === "9router") {
+      setRuntimeStatus(routerConnected ? "ready" : "runtime_unavailable");
+      setActiveSkillIds([]);
+      return;
+    }
     void invokeRuntimeStatus(settings.ai.model).then((status) => {
       if (!status) return;
       setRuntimeStatus(status as RuntimeStatus);
       if (status === "ready") lastActivityRef.current = Date.now();
     });
-  }, [genState, settings.ai.model]);
+  }, [genState, settings.ai.model, settings.ai.provider, routerConnected]);
 
   // Apply persisted or changed runtime policy to a model already loaded in RAM.
   // Defer briefly after chat completion so the backend can remove the terminal stream
   // from its registry before the policy-setting request checks that registry.
   useEffect(() => {
+    if (settings.ai.provider !== "local") return;
     if (runtimeStatus !== "ready" || genState !== "idle") return;
     if (chatStartPendingRef.current || streamIdRef.current !== null || runtimeOperationRef.current) return;
 
@@ -487,10 +544,11 @@ export default function App() {
       window.clearTimeout(timerId);
       if (!operationStarted) runtimeOperationRef.current = false;
     };
-  }, [settings.ai.model, settings.ai.runtimePolicy, runtimeStatus, genState]);
+  }, [settings.ai.model, settings.ai.runtimePolicy, settings.ai.provider, runtimeStatus, genState]);
 
   // ── Runtime lifecycle: automatically unload only after a full idle hour ──
   useEffect(() => {
+    if (settings.ai.provider !== "local") return;
     if (settings.ai.runtimePolicy !== "auto" || runtimeStatus !== "ready") return;
     if (genState !== "idle") return;
 
@@ -540,7 +598,7 @@ export default function App() {
       window.clearInterval(timerId);
       if (keepaliveTimerRef.current === timerId) keepaliveTimerRef.current = null;
     };
-  }, [settings.ai.runtimePolicy, runtimeStatus, genState, settings.ai.model]);
+  }, [settings.ai.provider, settings.ai.runtimePolicy, runtimeStatus, genState, settings.ai.model]);
 
   // ── Set up SSE event listeners once ──
   useEffect(() => {
@@ -565,6 +623,7 @@ export default function App() {
         // A late stream may still deliver its final event after the user cancelled it.
         if (cancelledStreamIdsRef.current.has(e.id)) {
           if (e.done) {
+            setActiveSkillIds([]);
             if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
             else cancelledStreamIdsRef.current.delete(e.id);
             void refreshRuntimeStatus();
@@ -575,6 +634,7 @@ export default function App() {
         if (e.id !== streamIdRef.current) return;
 
         if (e.done) {
+          setActiveSkillIds([]);
           // Start a new idle window from the end of a completed or cancelled stream.
           lastActivityRef.current = Date.now();
           // Finalise: mark message as not streaming
@@ -605,12 +665,14 @@ export default function App() {
       },
       onError: (e) => {
         if (cancelledStreamIdsRef.current.has(e.id)) {
+          setActiveSkillIds([]);
           if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
           else cancelledStreamIdsRef.current.delete(e.id);
           void refreshRuntimeStatus();
           return;
         }
         if (!mounted || e.id !== streamIdRef.current) return;
+        setActiveSkillIds([]);
         lastActivityRef.current = Date.now();
         const failedMessageId = streamingMsgIdRef.current;
         if (failedMessageId) {
@@ -762,6 +824,142 @@ export default function App() {
     setSettings((s) => ({ ...s, ai: { ...s.ai, ...patch } }));
   }, []);
 
+  const selectProvider = useCallback((provider: AiProvider) => {
+    if (provider === "9router" && !routerConnected) {
+      setCommandDialog("connect");
+      setRouterError("Masukkan API key dan hubungkan 9Router sebelum memilih provider ini.");
+      return;
+    }
+    if (provider === "local") {
+      const nextModel = settings.ai.localModel || localModels[0]?.id || "";
+      const visionAvailable = routerConnected && routerModels.some((item) => item.id === settings.ai.visionModel);
+      patchAi({
+        provider,
+        model: nextModel,
+        localModel: nextModel,
+        visionModel: visionAvailable ? settings.ai.visionModel : "",
+      });
+      return;
+    }
+    const nextModel = settings.ai.routerModel || routerModels[0]?.id || "";
+    const visionAvailable = routerModels.some((item) => item.id === settings.ai.visionModel);
+    patchAi({ provider, model: nextModel, routerModel: nextModel, visionModel: visionAvailable ? settings.ai.visionModel : "" });
+  }, [routerConnected, settings.ai.localModel, settings.ai.routerModel, settings.ai.visionModel, localModels, routerModels, patchAi]);
+
+  const selectModel = useCallback((modelId: string) => {
+    if (settings.ai.provider === "9router") {
+      patchAi({ model: modelId, routerModel: modelId });
+    } else {
+      patchAi({ model: modelId, localModel: modelId });
+    }
+  }, [settings.ai.provider, settings.ai.thinking, localModels, patchAi]);
+
+  const connectRouter = useCallback(async (apiKey: string) => {
+    setRouterBusy(true);
+    setRouterError(null);
+    try {
+      const available = await invokeConnect9Router(apiKey);
+      setRouterModels(available);
+      setRouterConnected(true);
+      const nextModel = settings.ai.routerModel && available.some((item) => item.id === settings.ai.routerModel)
+        ? settings.ai.routerModel
+        : available[0]?.id ?? "";
+      const visionModel = available.some((item) => item.id === settings.ai.visionModel) ? settings.ai.visionModel : "";
+      patchAi({ provider: "9router", model: nextModel, routerModel: nextModel, visionModel });
+      setCommandDialog(null);
+      setRouterError(null);
+    } catch (error) {
+      setRouterError(error instanceof Error ? error.message : "Koneksi 9Router gagal.");
+    } finally {
+      setRouterBusy(false);
+    }
+  }, [settings.ai.routerModel, settings.ai.visionModel, patchAi]);
+
+  const disconnectRouter = useCallback(async () => {
+    try {
+      await invokeDisconnect9Router();
+      setRouterConnected(false);
+      setRouterModels([]);
+      setRouterError(null);
+      const nextModel = settings.ai.localModel || localModels[0]?.id || "";
+      patchAi({ provider: "local", model: nextModel, thinking: false, localModel: nextModel, visionModel: "" });
+      setCommandDialog(null);
+    } catch (error) {
+      setRouterError(error instanceof Error ? error.message : "Gagal memutuskan koneksi 9Router.");
+    }
+  }, [settings.ai.localModel, localModels, patchAi]);
+
+  const refreshRouterModels = useCallback(async () => {
+    if (!routerConnected) {
+      setRouterError("9Router belum terhubung. Gunakan /connect terlebih dahulu.");
+      setCommandDialog("connect");
+      return;
+    }
+    setRouterBusy(true);
+    setRouterError(null);
+    try {
+      const models = await invokeList9RouterModels();
+      setRouterModels(models);
+      if (settings.ai.visionModel && !models.some((item) => item.id === settings.ai.visionModel)) {
+        patchAi({ visionModel: "" });
+      }
+      const current = settings.ai.provider === "9router" ? settings.ai.model : settings.ai.routerModel;
+      if (!models.some((item) => item.id === current)) {
+        const nextModel = models[0]?.id ?? "";
+        patchAi({
+          routerModel: nextModel,
+          ...(settings.ai.provider === "9router" ? { model: nextModel } : {}),
+        });
+      }
+    } catch (error) {
+      setRouterError(error instanceof Error ? error.message : "Gagal memuat ulang daftar model 9Router.");
+    } finally {
+      setRouterBusy(false);
+    }
+  }, [routerConnected, settings.ai.provider, settings.ai.model, settings.ai.routerModel, settings.ai.visionModel, patchAi]);
+
+  const openSlashCommand = useCallback((command?: string) => {
+    const name = command?.trim().split(/\s+/)[0];
+    if (name === "/sessions") setCommandDialog("sessions");
+    else if (name === "/model") setCommandDialog("model");
+    else if (name === "/connect") { setRouterError(null); setCommandDialog("connect"); }
+    else setCommandDialog("menu");
+  }, []);
+
+  const prepareModelMessages = useCallback(async (conversationMessages: Message[]) => {
+    const prepared = await buildModelMessages(conversationMessages);
+    if (!routerConnected || !settings.ai.visionModel) return prepared;
+
+    for (let index = 0; index < prepared.length; index += 1) {
+      const current = prepared[index];
+      if (current.role !== "user" || !current.images?.length) continue;
+      const source = conversationMessages[index];
+      if (!source) continue;
+      const cacheKey = source.id + "::" + settings.ai.visionModel;
+      let description = visionCacheRef.current.get(cacheKey);
+      if (!description) {
+        const imageAttachments = (source.attachments ?? []).filter((attachment) => attachment.format === "image");
+        const imageMimeTypes = current.images.map((_, imageIndex) =>
+          imageAttachments[imageIndex]?.mimeType || "image/png"
+        );
+        description = await invokeRouterVisionDescribe({
+          model: settings.ai.visionModel,
+          prompt: "Baca gambar untuk membantu menjawab pesan berikut: " + source.text + ". Laporkan hanya detail yang terlihat, teks yang terbaca, dan ketidakpastian.",
+          images: current.images,
+          imageMimeTypes,
+        });
+        visionCacheRef.current.set(cacheKey, description);
+      }
+      const updated = {
+        ...current,
+        content: current.content + "\n\n[Analisis visual dari Vision Helper " + settings.ai.visionModel + "]\n" + description,
+      };
+      delete updated.images;
+      prepared[index] = updated;
+    }
+    return prepared;
+  }, [settings.ai.visionModel, routerConnected]);
+
   const applyProfile = useCallback((p: ProfileId) => {
     const preset = profileById(p);
     setSettings((s) => ({
@@ -770,10 +968,11 @@ export default function App() {
     }));
   }, []);
 
-  // ── Send message: real local model only ──
+  // ── Send message through the active provider ──
   const sendMessage = useCallback(
     async (text: string, attached: Attachment[]): Promise<boolean> => {
       const t = text.trim();
+      const provider = settings.ai.provider;
       if (memoryOperationRef.current) {
         setChatError("Penyimpanan lokal sedang dipindahkan atau dicadangkan. Tunggu sampai selesai.");
         return false;
@@ -783,8 +982,8 @@ export default function App() {
         setChatError("Penyimpanan lokal masih disiapkan atau tidak tersedia. Tunggu sampai inisialisasi selesai, lalu coba lagi.");
         return false;
       }
-      if (runtimeOperationRef.current) {
-        setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+      if (provider === "local" && runtimeOperationRef.current) {
+        setChatError("Model lokal sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
         return false;
       }
       if (genState !== "idle") return false;
@@ -792,29 +991,44 @@ export default function App() {
         setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
         return false;
       }
-      if (!settings.ai.model || !localModels.some((item) => item.id === settings.ai.model)) {
-        setChatError("Belum ada model AI lokal yang dipilih atau model pilihan tidak lagi terpasang. Buka AI Lokal untuk memilih atau mengunduh model.");
-        return false;
-      }
 
-      if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
-        const readinessMessage: Record<RuntimeStatus, string> = {
-          not_installed: "Ollama belum terpasang. Pasang Ollama terlebih dahulu untuk memakai chat AI lokal.",
-          runtime_unavailable: "Ollama tidak dapat dihubungi. Buka Ollama dan pastikan runtime lokal berjalan, lalu coba lagi.",
-          model_not_downloaded: `Model ${settings.ai.model} belum diunduh. Unduh model tersebut terlebih dahulu, lalu coba lagi.`,
-          loading: "Model masih dimuat. Tunggu sampai status model siap sebelum mengirim pesan.",
-          ready: "",
-          thinking: "Model sedang berpikir. Tunggu sampai respons saat ini selesai.",
-          generating: "Model sedang menghasilkan respons. Tunggu sampai respons saat ini selesai.",
-          unloading: "Model sedang dilepas dari memori. Tunggu sampai proses selesai, lalu coba lagi.",
-          unloaded: "",
-          error: "Runtime AI mengalami kesalahan. Periksa Ollama dan status model, lalu coba lagi.",
-        };
-        setChatError(readinessMessage[runtimeStatus]);
-        return false;
+      if (provider === "9router") {
+        if (!routerConnected) {
+          setChatError("9Router belum terhubung. Gunakan /connect untuk memasukkan API key.");
+          setCommandDialog("connect");
+          return false;
+        }
+        if (!settings.ai.model || !routerModels.some((item) => item.id === settings.ai.model)) {
+          setChatError("Pilih model 9Router yang tersedia melalui /model.");
+          setCommandDialog("model");
+          return false;
+        }
+      } else {
+        if (!settings.ai.model || !localModels.some((item) => item.id === settings.ai.model)) {
+          setChatError("Belum ada model AI lokal yang dipilih atau model pilihan tidak lagi terpasang. Buka AI Lokal untuk memilih atau mengunduh model.");
+          return false;
+        }
+        if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
+          const readinessMessage: Record<RuntimeStatus, string> = {
+            not_installed: "Ollama belum terpasang. Pasang Ollama terlebih dahulu untuk memakai chat AI lokal.",
+            runtime_unavailable: "Ollama tidak dapat dihubungi. Buka Ollama dan pastikan runtime lokal berjalan, lalu coba lagi.",
+            model_not_downloaded: "Model " + settings.ai.model + " belum diunduh. Unduh model tersebut terlebih dahulu, lalu coba lagi.",
+            loading: "Model masih dimuat. Tunggu sampai status model siap sebelum mengirim pesan.",
+            ready: "",
+            thinking: "Model sedang berpikir. Tunggu sampai respons saat ini selesai.",
+            generating: "Model sedang menghasilkan respons. Tunggu sampai respons saat ini selesai.",
+            unloading: "Model sedang dilepas dari memori. Tunggu sampai proses selesai, lalu coba lagi.",
+            unloaded: "",
+            error: "Runtime AI mengalami kesalahan. Periksa Ollama dan status model, lalu coba lagi.",
+          };
+          setChatError(readinessMessage[runtimeStatus]);
+          return false;
+        }
       }
 
       setChatError(null);
+      const skillIds = detectSkills(t, attached.length > 0, settings.ai.thinking);
+      setActiveSkillIds(skillIds);
 
       const images = attached
         .filter((attachment) => attachment.format === "image" && attachment.base64)
@@ -840,7 +1054,7 @@ export default function App() {
       lastActivityRef.current = Date.now();
       setMessages((current) => [...current, userMsg]);
 
-      if (runtimeStatus === "unloaded") setRuntimeStatus("loading");
+      if (provider === "local" && runtimeStatus === "unloaded") setRuntimeStatus("loading");
       setGenState("generating");
       const msgId = uid();
       streamingMsgIdRef.current = msgId;
@@ -852,41 +1066,87 @@ export default function App() {
       chatStartPendingRef.current = true;
       cancelBeforeStartRef.current = false;
       let modelMessages: ChatStartPayload["messages"];
+      let skillsPrompt = buildSkillsPrompt(skillIds);
+
       try {
-        modelMessages = await buildModelMessages([...messagesBeforeSend, userMsg]);
-      } catch {
+        modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg]);
+
+        // Web Research is an explicit network tool, not a claim that the model browsed.
+        if (skillIds.includes("web-research")) {
+          try {
+            const results = await invokeWebSearch(t);
+            const sourceContext = results.length
+              ? [
+                  "HASIL WEB SEARCH (gunakan tanggal yang tercantum, jangan mengarang tanggal):",
+                  ...results.map((item, index) =>
+                    (index + 1) + ". " + item.title + "\nURL: " + item.url + "\nRingkasan: " + (item.snippet || "Tidak tersedia.")
+                  ),
+                  "Cantumkan tautan sumber yang relevan di jawaban akhir dan bedakan fakta sumber dari inferensi.",
+                ].join("\n")
+              : "Web search tidak menghasilkan hasil yang dapat digunakan. Jelaskan keterbatasan ini; jangan mengklaim browsing berhasil.";
+            skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
+          } catch (error) {
+            skillsPrompt = [
+              skillsPrompt,
+              "Web search gagal dijalankan: " + (error instanceof Error ? error.message : String(error)) + ". Jangan mengklaim informasi sudah diverifikasi secara online.",
+            ].filter(Boolean).join("\n\n");
+          }
+        }
+      } catch (error) {
         chatStartPendingRef.current = false;
         setMessages((current) => current.filter((message) => message.id !== msgId && message.id !== userMsg.id));
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         setGenState("idle");
-        setChatError("Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
+        setActiveSkillIds([]);
+        setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
         return false;
       }
       if (cancelBeforeStartRef.current) {
         chatStartPendingRef.current = false;
         cancelBeforeStartRef.current = false;
         streamIdRef.current = null;
+        setActiveSkillIds([]);
         return false;
       }
 
-      const payload: ChatStartPayload = {
-        model: settings.ai.model,
-        messages: modelMessages,
-        think: settings.ai.thinking,
-        runtimePolicy: settings.ai.runtimePolicy,
-        options: {
-          temperature: settings.ai.temperature,
-          num_ctx: settings.ai.contextWindow,
-          num_predict: settings.ai.maxOutputTokens,
-          top_p: settings.ai.topP,
-          top_k: settings.ai.topK,
-          repeat_penalty: settings.ai.repeatPenalty,
-          stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
-          seed: settings.ai.seed,
-        },
-      };
-
-      const id = await invokeChatStart(payload);
+      let id: string | null = null;
+      try {
+        if (provider === "9router") {
+          id = await invokeRouterChatStart({
+            model: settings.ai.model,
+            messages: modelMessages,
+            think: settings.ai.thinking,
+            options: {
+              temperature: settings.ai.temperature,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+            },
+            skillsPrompt,
+          });
+        } else {
+          const payload: ChatStartPayload = {
+            model: settings.ai.model,
+            messages: skillsPrompt
+              ? [{ role: "system", content: skillsPrompt }, ...modelMessages]
+              : modelMessages,
+            think: settings.ai.thinking && Boolean(localModels.find((item) => item.id === settings.ai.model)?.thinking_supported),
+            runtimePolicy: settings.ai.runtimePolicy,
+            options: {
+              temperature: settings.ai.temperature,
+              num_ctx: settings.ai.contextWindow,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+              top_k: settings.ai.topK,
+              repeat_penalty: settings.ai.repeatPenalty,
+              stop: settings.ai.stopSequences.split(",").map((value) => value.trim()).filter(Boolean),
+              seed: settings.ai.seed,
+            },
+          };
+          id = await invokeChatStart(payload);
+        }
+      } catch (error) {
+        setChatError(error instanceof Error ? error.message : "Gagal memulai permintaan AI.");
+      }
       chatStartPendingRef.current = false;
 
       if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
@@ -900,12 +1160,12 @@ export default function App() {
           }
         }
         streamIdRef.current = null;
+        setActiveSkillIds([]);
         return false;
       }
 
       if (!id) {
-        // Backend belum menerima pesan: kembalikan chat ke keadaan sebelum kirim,
-        // supaya input pengguna tetap tersedia untuk dicoba ulang.
+        // Backend belum menerima pesan: hapus placeholder dan simpan input di composer untuk retry.
         setMessages((current) =>
           current.filter((message) => message.id !== msgId && message.id !== userMsg.id),
         );
@@ -913,19 +1173,24 @@ export default function App() {
         streamIdRef.current = null;
         cancelBeforeStartRef.current = false;
         setGenState("idle");
+        setActiveSkillIds([]);
         lastActivityRef.current = Date.now();
-        setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
-        void refreshRuntimeStatus();
+        setChatError(provider === "9router"
+          ? "AzaleaHouse gagal memulai respons 9Router. Periksa gateway localhost:20128, API key, dan model yang dipilih."
+          : "AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
+        if (provider === "local") void refreshRuntimeStatus();
         return false;
       }
 
       streamIdRef.current = id;
       lastActivityRef.current = Date.now();
-      // The chat request itself has applied this keep_alive policy to Ollama.
-      lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+      if (provider === "local") {
+        // The Ollama request itself applied the selected keep-alive policy.
+        lastAppliedRuntimeConfigRef.current = settings.ai.model + "|" + settings.ai.runtimePolicy;
+      }
       return true;
     },
-    [genState, runtimeStatus, settings.ai, localModels, refreshRuntimeStatus],
+    [genState, runtimeStatus, settings.ai, localModels, routerModels, routerConnected, refreshRuntimeStatus, prepareModelMessages],
   );
 
   // ── Stop / cancel ──
@@ -957,8 +1222,20 @@ export default function App() {
 
     streamingMsgIdRef.current = null;
     setGenState("idle");
+    setActiveSkillIds([]);
     setStreamIdRef(null);
   }, []);
+
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || commandDialog !== null || versionOpen) return;
+      if (genState !== "generating" && !chatStartPendingRef.current && streamIdRef.current === null) return;
+      event.preventDefault();
+      stopGeneration();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [commandDialog, versionOpen, genState, stopGeneration]);
 
   // ── Regenerate ──
   const regenerate = useCallback(() => {
@@ -966,24 +1243,31 @@ export default function App() {
       setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuat ulang respons.");
       return;
     }
+    const provider = settings.ai.provider;
     const current = messagesRef.current;
     const last = current[current.length - 1];
     if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
-    if (runtimeOperationRef.current) {
-      setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
-      return;
-    }
 
-    if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
-      setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
+    if (provider === "local") {
+      if (runtimeOperationRef.current) {
+        setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+        return;
+      }
+      if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
+        setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
+        return;
+      }
+    } else if (!routerConnected || !routerModels.some((item) => item.id === settings.ai.model)) {
+      setChatError("9Router belum terhubung atau model tidak tersedia. Gunakan /connect atau /model.");
       return;
     }
 
     const userMsg = [...current].reverse().find((message) => message.role === "user");
     if (!userMsg) return;
-
     const idx = current.lastIndexOf(userMsg);
     const messagesToSend = current.slice(0, idx + 1);
+    const skillIds = detectSkills(userMsg.text, Boolean(userMsg.attachments?.length), settings.ai.thinking);
+    setActiveSkillIds(skillIds);
     setChatError(null);
     lastActivityRef.current = Date.now();
     setMessages((messages) => messages.slice(0, idx + 1));
@@ -1000,67 +1284,113 @@ export default function App() {
     cancelBeforeStartRef.current = false;
     void (async () => {
       try {
-        const payload: ChatStartPayload = {
-          model: settings.ai.model,
-          messages: await buildModelMessages(messagesToSend),
-          think: settings.ai.thinking,
-          runtimePolicy: settings.ai.runtimePolicy,
-          options: {
-            temperature: settings.ai.temperature,
-            num_ctx: settings.ai.contextWindow,
-            num_predict: settings.ai.maxOutputTokens,
-            top_p: settings.ai.topP,
-            top_k: settings.ai.topK,
-            repeat_penalty: settings.ai.repeatPenalty,
-            stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
-            seed: settings.ai.seed,
-          },
-        };
+        let modelMessages = await prepareModelMessages(messagesToSend);
+        let skillsPrompt = buildSkillsPrompt(skillIds);
+        if (skillIds.includes("web-research")) {
+          try {
+            const results = await invokeWebSearch(userMsg.text);
+            const sourceContext = results.length
+              ? [
+                  "HASIL WEB SEARCH:",
+                  ...results.map((item, index) =>
+                    (index + 1) + ". " + item.title + "\nURL: " + item.url + "\nRingkasan: " + (item.snippet || "Tidak tersedia.")
+                  ),
+                  "Cantumkan tautan sumber di jawaban akhir.",
+                ].join("\n")
+              : "Pencarian web tidak mengembalikan hasil. Jangan mengklaim browsing berhasil.";
+            skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
+          } catch (error) {
+            skillsPrompt = [skillsPrompt, "Web search gagal: " + (error instanceof Error ? error.message : String(error))].filter(Boolean).join("\n\n");
+          }
+        }
+
         if (cancelBeforeStartRef.current) {
           chatStartPendingRef.current = false;
           cancelBeforeStartRef.current = false;
           streamIdRef.current = null;
+          setActiveSkillIds([]);
           return;
         }
-        const id = await invokeChatStart(payload);
+
+        let id: string | null = null;
+        if (provider === "9router") {
+          id = await invokeRouterChatStart({
+            model: settings.ai.model,
+            messages: modelMessages,
+            think: settings.ai.thinking,
+            options: {
+              temperature: settings.ai.temperature,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+            },
+            skillsPrompt,
+          });
+        } else {
+          if (skillsPrompt) modelMessages = [{ role: "system", content: skillsPrompt }, ...modelMessages];
+          const payload: ChatStartPayload = {
+            model: settings.ai.model,
+            messages: modelMessages,
+            think: settings.ai.thinking && Boolean(localModels.find((item) => item.id === settings.ai.model)?.thinking_supported),
+            runtimePolicy: settings.ai.runtimePolicy,
+            options: {
+              temperature: settings.ai.temperature,
+              num_ctx: settings.ai.contextWindow,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+              top_k: settings.ai.topK,
+              repeat_penalty: settings.ai.repeatPenalty,
+              stop: settings.ai.stopSequences.split(",").map((value) => value.trim()).filter(Boolean),
+              seed: settings.ai.seed,
+            },
+          };
+          id = await invokeChatStart(payload);
+        }
+
         chatStartPendingRef.current = false;
         if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
           cancelBeforeStartRef.current = false;
           if (id) {
-            if (cancelledStreamIdsRef.current.get(id) === true) {
-              cancelledStreamIdsRef.current.delete(id);
-            } else {
+            if (cancelledStreamIdsRef.current.get(id) === true) cancelledStreamIdsRef.current.delete(id);
+            else {
               cancelledStreamIdsRef.current.set(id, false);
               void invokeChatCancel(id);
             }
           }
           streamIdRef.current = null;
+          setActiveSkillIds([]);
           return;
         }
         if (id) {
           streamIdRef.current = id;
           lastActivityRef.current = Date.now();
-          lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+          if (provider === "local") {
+            lastAppliedRuntimeConfigRef.current = settings.ai.model + "|" + settings.ai.runtimePolicy;
+          }
           return;
         }
+
         cancelBeforeStartRef.current = false;
         lastActivityRef.current = Date.now();
         setMessages((messages) => messages.filter((message) => message.id !== msgId));
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         streamIdRef.current = null;
         setGenState("idle");
-        setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
-        void refreshRuntimeStatus();
-      } catch {
+        setActiveSkillIds([]);
+        setChatError(provider === "9router"
+          ? "Gagal membuat ulang respons melalui 9Router. Periksa gateway dan model."
+          : "AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
+        if (provider === "local") void refreshRuntimeStatus();
+      } catch (error) {
         chatStartPendingRef.current = false;
         cancelBeforeStartRef.current = false;
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         setMessages((messages) => messages.filter((message) => message.id !== msgId));
         setGenState("idle");
-        setChatError("Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
+        setActiveSkillIds([]);
+        setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
       }
     })();
-  }, [genState, runtimeStatus, settings.ai, refreshRuntimeStatus]);
+  }, [genState, runtimeStatus, settings.ai, routerConnected, routerModels, localModels, refreshRuntimeStatus, prepareModelMessages]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
@@ -1172,22 +1502,40 @@ export default function App() {
   }, [persistConversation, refreshHistory, setActiveConversationId, stopGeneration]);
 
   const installedModel = localModels.find((item) => item.id === settings.ai.model);
-  const model = installedModel
+  const selectedRouterModel = routerModels.find((item) => item.id === settings.ai.model);
+  const model = settings.ai.provider === "9router"
     ? {
-        id: installedModel.id,
-        name: installedModel.name,
-        thinkingSupported: installedModel.thinking_supported,
-        note: installedModel.note,
-      }
-    : {
         id: settings.ai.model,
-        name: settings.ai.model,
-        thinkingSupported: false,
-        note: "Belum terpasang di Ollama lokal",
-      };
+        name: selectedRouterModel?.name || selectedRouterModel?.id || "Pilih model 9Router",
+        thinkingSupported: routerConnected,
+        note: "Model dari 9Router",
+      }
+    : installedModel
+      ? {
+          id: installedModel.id,
+          name: installedModel.name,
+          thinkingSupported: installedModel.thinking_supported,
+          note: installedModel.note,
+        }
+      : {
+          id: settings.ai.model,
+          name: settings.ai.model,
+          thinkingSupported: false,
+          note: "Belum terpasang di Ollama lokal",
+        };
+  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant" && message.text.trim())?.text ?? "";
+  const lastUserPrompt = [...messages].reverse().find((message) => message.role === "user" && message.text.trim())?.text ?? "";
+
+  const activeModelOptions = settings.ai.provider === "9router"
+    ? routerModels.map((item) => ({ id: item.id, name: item.name || item.id }))
+    : localModels.map((item) => ({ id: item.id, name: item.name }));
+  const activeRuntimeStatus: RuntimeStatus = settings.ai.provider === "9router"
+    ? (routerConnected ? "ready" : "runtime_unavailable")
+    : runtimeStatus;
 
   // ── Manual model unload ──
   const unloadModel = useCallback(async () => {
+    if (settings.ai.provider !== "local") return;
     if (runtimeOperationRef.current) {
       setChatError("Operasi model sedang berlangsung. Tunggu sampai selesai sebelum melepas model.");
       return;
@@ -1228,7 +1576,7 @@ export default function App() {
     } finally {
       runtimeOperationRef.current = false;
     }
-  }, [genState, runtimeStatus, settings.ai.model]);
+  }, [genState, runtimeStatus, settings.ai.provider, settings.ai.model]);
 
   // ── Memory operations (Phase 1 hardening / Phase 4 storage) ──
   const openMemoryFolder = useCallback(async () => {
@@ -1350,6 +1698,19 @@ export default function App() {
     }
   }, []);
 
+  const installUpdate = useCallback(async () => {
+    setUpdateStatus("installing");
+    setUpdateInfo((previous) => previous ? { ...previous, error: null } : previous);
+    try {
+      await invokeInstallUpdate();
+      // The Rust command starts the installer and requests application exit.
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUpdateInfo((previous) => previous ? { ...previous, error: message || "Installer gagal dijalankan." } : previous);
+      setUpdateStatus("error");
+    }
+  }, []);
+
   // Listen for download progress events
   useEffect(() => {
     const cleanup = listenUpdateProgress((e) => {
@@ -1378,7 +1739,7 @@ export default function App() {
         view={view}
         onNavigate={setView}
         onNewChat={newChat}
-        runtimeStatus={runtimeStatus}
+        runtimeStatus={settings.ai.provider === "local" ? runtimeStatus : routerConnected ? "ready" : "runtime_unavailable"}
         version={appVersion}
         onOpenVersionCenter={() => setVersionOpen(true)}
         onUnloadModel={unloadModel}
@@ -1393,14 +1754,10 @@ export default function App() {
               animAllowed={animAllowed}
               modelName={model?.name ?? settings.ai.model}
               modelId={settings.ai.model}
-              availableModels={localModels}
-              onModelChange={(modelId) => {
-                const nextModel = localModels.find((item) => item.id === modelId);
-                patchAi({
-                  model: modelId,
-                  thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
-                });
-              }}
+              availableModels={activeModelOptions}
+              provider={settings.ai.provider}
+              onModelChange={selectModel}
+              onOpenCommands={openSlashCommand}
               onOpenLocalAi={() => setView("local-ai")}
               panelOpen={panelOpen}
               onTogglePanel={() => setPanelOpen((o) => !o)}
@@ -1411,10 +1768,10 @@ export default function App() {
               onRegenerate={regenerate}
               thinking={settings.ai.thinking}
               onToggleThinking={() => patchAi({ thinking: !settings.ai.thinking })}
-              thinkingSupported={model?.thinkingSupported ?? true}
+              thinkingSupported={true}
               profile={settings.ai.profile}
               onProfileChange={applyProfile}
-              runtimeStatus={runtimeStatus}
+              runtimeStatus={activeRuntimeStatus}
               chatError={chatError}
               onDismissChatError={() => setChatError(null)}
               attachments={attachments}
@@ -1450,19 +1807,21 @@ export default function App() {
               models={localModels}
               modelListError={modelListError}
               runtimeStatus={runtimeStatus}
-              selectedModel={settings.ai.model}
+              selectedModel={settings.ai.localModel}
               onRefreshModels={refreshLocalModels}
               onUseModel={(modelId) => {
-                const nextModel = localModels.find((item) => item.id === modelId);
                 patchAi({
+                  provider: "local",
                   model: modelId,
-                  thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
+                  localModel: modelId,
                 });
                 setView("chat");
               }}
               onBackToChat={() => setView("chat")}
               onModelDeleted={(modelId) => {
-                if (settings.ai.model === modelId) patchAi({ model: "", thinking: false });
+                if (settings.ai.localModel === modelId) {
+                  patchAi({ localModel: "", ...(settings.ai.provider === "local" ? { model: "" } : {}), thinking: false });
+                }
               }}
               modelBusy={genState !== "idle" || runtimeStatus === "loading" || runtimeStatus === "unloading"}
             />
@@ -1471,17 +1830,17 @@ export default function App() {
 
         {view === "documents" ? (
           <div className="view-fade">
-            <DocumentsView />
+            <DocumentsView lastAssistantMessage={lastAssistantMessage} lastUserPrompt={lastUserPrompt} />
           </div>
         ) : null}
 
         {view === "images" ? (
           <div className="view-fade">
-            <ComingSoon
-              icon={<IconImage size={28} />}
-              title="Gambar"
-              desc="Analisis gambar dan screenshot lewat pipeline vision akan hadir di sini."
-              phase="Fase 5"
+            <ImageStudio
+              connected={routerConnected}
+              models={routerModels}
+              initialPrompt={lastAssistantMessage}
+              onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
             />
           </div>
         ) : null}
@@ -1501,7 +1860,20 @@ export default function App() {
       {view === "chat" && panelOpen ? (
         <SettingsPanel
           settings={settings.ai}
-          onChange={patchAi}
+          localModels={localModels}
+          routerModels={routerModels}
+          routerConnected={routerConnected}
+          visionModel={settings.ai.visionModel}
+          activeSkillIds={activeSkillIds}
+          onChange={(patch) => {
+            if (typeof patch.model === "string") selectModel(patch.model);
+            else patchAi(patch);
+          }}
+          onProviderChange={selectProvider}
+          onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
+          onDisconnect={disconnectRouter}
+          onRefreshModels={refreshRouterModels}
+          routerBusy={routerBusy}
           onOpenAdvanced={() => setView("settings")}
         />
       ) : null}
@@ -1516,6 +1888,26 @@ export default function App() {
         </div>
       ) : null}
 
+      <CommandDialog
+        mode={commandDialog}
+        provider={settings.ai.provider}
+        connected={routerConnected}
+        models={activeModelOptions}
+        selectedModel={settings.ai.model}
+        history={history}
+        busy={routerBusy}
+        error={routerError}
+        onClose={() => setCommandDialog(null)}
+        onModeChange={(mode) => setCommandDialog(mode)}
+        onProviderChange={selectProvider}
+        onModelChange={(modelId) => { selectModel(modelId); setCommandDialog(null); }}
+        onConnect={connectRouter}
+        onDisconnect={disconnectRouter}
+        onRefreshModels={refreshRouterModels}
+        onOpenSession={(id) => { setCommandDialog(null); void openConversation(id); }}
+        onDeleteSession={(id) => { void deleteConversation(id); }}
+      />
+
       <VersionCenter
         open={versionOpen}
         onClose={() => setVersionOpen(false)}
@@ -1526,6 +1918,7 @@ export default function App() {
         onCheck={checkForUpdate}
         onDownload={downloadUpdate}
         onCancelDownload={cancelDownload}
+        onInstall={installUpdate}
       />
       </div>
     </ErrorBoundary>
