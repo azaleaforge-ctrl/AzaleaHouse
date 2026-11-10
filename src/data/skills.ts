@@ -6,6 +6,18 @@ export type SkillId =
   | "document-engine"
   | "reasoning-adapter";
 
+export type ResponseProfile = "quick" | "balanced" | "deep";
+
+export const RESPONSE_PROFILE_PROMPTS: Record<ResponseProfile, string> = {
+  quick: "Mode Quick Chat: jawab langsung, ringkas, dan tepat. Berikan detail hanya yang dibutuhkan untuk menyelesaikan pertanyaan. Hindari pembukaan panjang dan jangan menjalankan pencarian atau tool kecuali pengguna memintanya atau jelas diperlukan.",
+  balanced: "Mode Balanced: berikan jawaban seimbang untuk percakapan sehari-hari. Jelaskan poin penting dengan cukup detail, gunakan struktur bila membantu, dan jangan bertele-tele.",
+  deep: "Mode Deep Analysis: telaah masalah secara menyeluruh sebelum menjawab. Periksa asumsi, alternatif, risiko, dan edge case yang relevan. Susun jawaban akhir secara terstruktur dengan kesimpulan serta ringkasan alasan/metode yang dapat diperiksa. Jangan tampilkan chain-of-thought mentah. Gunakan web research hanya ketika permintaan memang membutuhkan sumber atau informasi eksternal.",
+};
+
+export function buildProfilePrompt(profile: ResponseProfile): string {
+  return RESPONSE_PROFILE_PROMPTS[profile];
+}
+
 export interface SkillDefinition {
   id: SkillId;
   name: string;
@@ -62,7 +74,7 @@ export function detectSkills(prompt: string, hasAttachments: boolean, thinking: 
   if (/\b(dokumen|buat dokumen|laporan|proposal|docx|pdf|pptx?|word|presentasi|presentation|slide|cover)\b/.test(value)) {
     ids.push("document-engine");
   }
-  if (/\b(terbaru|terkini|hari ini|sekarang|latest|today|current|news|berita|harga|kurs|cuaca|jadwal|regulasi|aturan|web|internet|search|online|sumber|202[6-9])\b/.test(value)) {
+  if (/\b(terbaru|terkini|hari ini|sekarang|latest|today|current|news|berita|harga|kurs|cuaca|jadwal|regulasi|aturan|web|internet|search|online|sumber|riset|research|deepsearch|deep\\s+search|deep\\s+research|telusuri|browsing|202[6-9])\b/.test(value)) {
     ids.push("web-research");
   }
   if (thinking) ids.push("reasoning-adapter");
