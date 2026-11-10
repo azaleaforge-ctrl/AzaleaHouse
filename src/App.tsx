@@ -62,7 +62,6 @@ import { HistoryView } from "./components/HistoryView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
-import { ComingSoon } from "./components/ComingSoon";
 import { DocumentsView } from "./components/DocumentsView";
 import { ImageStudio } from "./components/ImageStudio";
 import { LocalAiView } from "./components/LocalAiView";
