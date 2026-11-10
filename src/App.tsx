@@ -1100,7 +1100,7 @@ export default function App() {
       chatStartPendingRef.current = true;
       cancelBeforeStartRef.current = false;
       let modelMessages: ChatStartPayload["messages"];
-      let skillsPrompt = [buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
+      let skillsPrompt = ["Jika membutuhkan klarifikasi dari pengguna, keluarkan pertanyaan dalam format persis [[ASK_USER]]pertanyaan singkat[[/ASK_USER]] pada jawaban. Jangan gunakan format ini untuk pertanyaan retoris atau pertanyaan yang tidak perlu dijawab sebelum melanjutkan.", buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
         .filter(Boolean)
         .join("\n\n");
 
@@ -1349,7 +1349,7 @@ export default function App() {
     void (async () => {
       try {
         let modelMessages = await prepareModelMessages(messagesToSend);
-        let skillsPrompt = [buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
+        let skillsPrompt = ["Jika membutuhkan klarifikasi dari pengguna, keluarkan pertanyaan dalam format persis [[ASK_USER]]pertanyaan singkat[[/ASK_USER]] pada jawaban. Jangan gunakan format ini untuk pertanyaan retoris atau pertanyaan yang tidak perlu dijawab sebelum melanjutkan.", buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
           .filter(Boolean)
           .join("\n\n");
         if (skillIds.includes("web-research")) {
