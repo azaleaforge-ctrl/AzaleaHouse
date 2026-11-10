@@ -1,3 +1,5 @@
+import type { ProviderTokenUsage } from "../types";
+
 /**
  * Pembacaan versi aplikasi via Tauri API.
  * Di peramban biasa (tanpa Tauri) langsung memakai nilai fallback.
