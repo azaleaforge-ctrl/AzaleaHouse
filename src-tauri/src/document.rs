@@ -430,7 +430,7 @@ fn core_properties_xml(title: &str) -> String {
 fn app_properties_xml() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
-  <Application>AzaleaHouse</Application><AppVersion>0.1.3</AppVersion>
+  <Application>AzaleaHouse</Application><AppVersion>0.2.1</AppVersion>
 </Properties>"#
 }
 
@@ -713,7 +713,7 @@ fn slide_relationships_xml() -> &'static str {
 }
 
 fn presentation_theme_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="AzaleaHouse"><a:themeElements><a:clrScheme name="Azalea"><a:dk1><a:srgbClr val="252A40"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="293A65"/></a:dk2><a:lt2><a:srgbClr val="FBF9FF"/></a:lt2><a:accent1><a:srgbClr val="E99B74"/></a:accent1><a:accent2><a:srgbClr val="8E85C5"/></a:accent2><a:accent3><a:srgbClr val="83BDA6"/></a:accent3><a:accent4><a:srgbClr val="E3C16F"/></a:accent4><a:accent5><a:srgbClr val="D98D9D"/></a:accent5><a:accent6><a:srgbClr val="6E9CB9"/></a:accent6><a:hlink><a:srgbClr val="5677C8"/></a:hlink><a:folHlink><a:srgbClr val="8E85C5"/></a:folHlink></a:clrScheme><a:fontScheme name="AzaleaFonts"><a:majorFont><a:latin typeface="Aptos Display"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/></a:minorFont></a:fontScheme><a:fmtScheme name="AzaleaFormat"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="AzaleaHouse"><a:themeElements><a:clrScheme name="Azalea"><a:dk1><a:srgbClr val="252A40"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="293A65"/></a:dk2><a:lt2><a:srgbClr val="FBF9FF"/></a:lt2><a:accent1><a:srgbClr val="E99B74"/></a:accent1><a:accent2><a:srgbClr val="8E85C5"/></a:accent2><a:accent3><a:srgbClr val="83BDA6"/></a:accent3><a:accent4><a:srgbClr val="E3C16F"/></a:accent4><a:accent5><a:srgbClr val="D98D9D"/></a:accent5><a:accent6><a:srgbClr val="6E9CB9"/></a:accent6><a:hlink><a:srgbClr val="5677C8"/></a:hlink><a:folHlink><a:srgbClr val="8E85C5"/></a:folHlink></a:clrScheme><a:fontScheme name="AzaleaFonts"><a:majorFont><a:latin typeface="Aptos Display"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/></a:minorFont></a:fontScheme><a:fmtScheme name="AzaleaFormat"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"/></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs></a:gsLst><a:lin ang="0" scaled="1"/></a:gradFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#
 }
 
 fn make_pptx(title: &str, markdown: &str) -> Result<Vec<u8>, String> {
@@ -1020,7 +1020,7 @@ mod tests {
     #[test]
     fn pptx_package_contains_presentation_and_slide_parts() {
         let bytes = make_pptx("Riset & Presentasi", "# Ringkasan\n\n- Poin pertama\n- Poin kedua\n\n[[SLIDE]]\n# Kesimpulan\nSelesai.").expect("PPTX should be built");
-        assert!(bytes.starts_with(b"PK\\x03\\x04"));
+        assert!(bytes.starts_with(b"PK\x03\x04"));
         let presentation = local_zip_entry(&bytes, "ppt/presentation.xml").expect("presentation.xml part");
         let presentation = std::str::from_utf8(presentation).expect("XML must be UTF-8");
         assert!(presentation.contains("screen16x9"));
