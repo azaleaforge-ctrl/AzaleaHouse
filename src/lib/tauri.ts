@@ -696,6 +696,7 @@ export async function invokeRouterGenerateVideo(args: {
   duration: number;
   aspectRatio: "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3";
   resolution: "480p" | "720p" | "1080p";
+  image?: string;
 }): Promise<GeneratedVideo> {
   if (!isTauri()) throw new Error("Video generation hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");
