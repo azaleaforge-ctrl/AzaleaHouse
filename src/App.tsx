@@ -63,6 +63,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { VersionCenter } from "./components/VersionCenter";
 import { ComingSoon } from "./components/ComingSoon";
 import { DocumentsView } from "./components/DocumentsView";
+import { ImageStudio } from "./components/ImageStudio";
 import { LocalAiView } from "./components/LocalAiView";
 import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
@@ -1796,11 +1797,10 @@ export default function App() {
 
         {view === "images" ? (
           <div className="view-fade">
-            <ComingSoon
-              icon={<IconImage size={28} />}
-              title="Gambar"
-              desc="Analisis gambar dan screenshot lewat pipeline vision akan hadir di sini."
-              phase="Fase 5"
+            <ImageStudio
+              connected={routerConnected}
+              models={routerModels}
+              onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
             />
           </div>
         ) : null}
