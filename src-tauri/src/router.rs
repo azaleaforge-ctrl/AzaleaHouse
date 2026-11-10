@@ -284,7 +284,7 @@ fn build_chat_completion_body(
     messages: Vec<serde_json::Value>,
     _options: &RouterOptions,
 ) -> serde_json::Value {
-    let mut body = serde_json::json!({
+    let body = serde_json::json!({
         "model": model,
         "messages": messages,
         "stream": true,
@@ -651,7 +651,7 @@ pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, String> {
 
 #[cfg(test)]
 mod chat_stream_tests {
-    use super::{parse_completion_chunk, ParsedCompletionChunk};
+    use super::{parse_completion_chunk, ParsedCompletionChunk, ProviderTokenUsage};
     use serde_json::json;
 
     #[test]
