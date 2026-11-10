@@ -41,6 +41,7 @@ pub fn run() {
             router::router_chat_start,
             router::web_search,
             router::router_vision_describe,
+            router::router_generate_image,
             // Phase 4: Local storage & .AzaleaMemory
             fs::memory_path,
             fs::ensure_memory_dir,
