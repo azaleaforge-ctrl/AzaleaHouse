@@ -1160,24 +1160,31 @@ export default function App() {
       setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuat ulang respons.");
       return;
     }
+    const provider = settings.ai.provider;
     const current = messagesRef.current;
     const last = current[current.length - 1];
     if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
-    if (runtimeOperationRef.current) {
-      setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
-      return;
-    }
 
-    if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
-      setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
+    if (provider === "local") {
+      if (runtimeOperationRef.current) {
+        setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+        return;
+      }
+      if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
+        setChatError("Model lokal belum siap. Periksa status Ollama dan model sebelum membuat ulang respons.");
+        return;
+      }
+    } else if (!routerConnected || !routerModels.some((item) => item.id === settings.ai.model)) {
+      setChatError("9Router belum terhubung atau model tidak tersedia. Gunakan /connect atau /model.");
       return;
     }
 
     const userMsg = [...current].reverse().find((message) => message.role === "user");
     if (!userMsg) return;
-
     const idx = current.lastIndexOf(userMsg);
     const messagesToSend = current.slice(0, idx + 1);
+    const skillIds = detectSkills(userMsg.text, Boolean(userMsg.attachments?.length), settings.ai.thinking);
+    setActiveSkillIds(skillIds);
     setChatError(null);
     lastActivityRef.current = Date.now();
     setMessages((messages) => messages.slice(0, idx + 1));
@@ -1194,67 +1201,113 @@ export default function App() {
     cancelBeforeStartRef.current = false;
     void (async () => {
       try {
-        const payload: ChatStartPayload = {
-          model: settings.ai.model,
-          messages: await buildModelMessages(messagesToSend),
-          think: settings.ai.thinking,
-          runtimePolicy: settings.ai.runtimePolicy,
-          options: {
-            temperature: settings.ai.temperature,
-            num_ctx: settings.ai.contextWindow,
-            num_predict: settings.ai.maxOutputTokens,
-            top_p: settings.ai.topP,
-            top_k: settings.ai.topK,
-            repeat_penalty: settings.ai.repeatPenalty,
-            stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
-            seed: settings.ai.seed,
-          },
-        };
+        let modelMessages = await buildModelMessages(messagesToSend);
+        let skillsPrompt = buildSkillsPrompt(skillIds);
+        if (skillIds.includes("web-research")) {
+          try {
+            const results = await invokeWebSearch(userMsg.text);
+            const sourceContext = results.length
+              ? [
+                  "HASIL WEB SEARCH:",
+                  ...results.map((item, index) =>
+                    (index + 1) + ". " + item.title + "\nURL: " + item.url + "\nRingkasan: " + (item.snippet || "Tidak tersedia.")
+                  ),
+                  "Cantumkan tautan sumber di jawaban akhir.",
+                ].join("\n")
+              : "Pencarian web tidak mengembalikan hasil. Jangan mengklaim browsing berhasil.";
+            skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
+          } catch (error) {
+            skillsPrompt = [skillsPrompt, "Web search gagal: " + (error instanceof Error ? error.message : String(error))].filter(Boolean).join("\n\n");
+          }
+        }
+
         if (cancelBeforeStartRef.current) {
           chatStartPendingRef.current = false;
           cancelBeforeStartRef.current = false;
           streamIdRef.current = null;
+          setActiveSkillIds([]);
           return;
         }
-        const id = await invokeChatStart(payload);
+
+        let id: string | null = null;
+        if (provider === "9router") {
+          id = await invokeRouterChatStart({
+            model: settings.ai.model,
+            messages: modelMessages,
+            think: settings.ai.thinking,
+            options: {
+              temperature: settings.ai.temperature,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+            },
+            skillsPrompt,
+          });
+        } else {
+          if (skillsPrompt) modelMessages = [{ role: "system", content: skillsPrompt }, ...modelMessages];
+          const payload: ChatStartPayload = {
+            model: settings.ai.model,
+            messages: modelMessages,
+            think: settings.ai.thinking,
+            runtimePolicy: settings.ai.runtimePolicy,
+            options: {
+              temperature: settings.ai.temperature,
+              num_ctx: settings.ai.contextWindow,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+              top_k: settings.ai.topK,
+              repeat_penalty: settings.ai.repeatPenalty,
+              stop: settings.ai.stopSequences.split(",").map((value) => value.trim()).filter(Boolean),
+              seed: settings.ai.seed,
+            },
+          };
+          id = await invokeChatStart(payload);
+        }
+
         chatStartPendingRef.current = false;
         if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
           cancelBeforeStartRef.current = false;
           if (id) {
-            if (cancelledStreamIdsRef.current.get(id) === true) {
-              cancelledStreamIdsRef.current.delete(id);
-            } else {
+            if (cancelledStreamIdsRef.current.get(id) === true) cancelledStreamIdsRef.current.delete(id);
+            else {
               cancelledStreamIdsRef.current.set(id, false);
               void invokeChatCancel(id);
             }
           }
           streamIdRef.current = null;
+          setActiveSkillIds([]);
           return;
         }
         if (id) {
           streamIdRef.current = id;
           lastActivityRef.current = Date.now();
-          lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+          if (provider === "local") {
+            lastAppliedRuntimeConfigRef.current = settings.ai.model + "|" + settings.ai.runtimePolicy;
+          }
           return;
         }
+
         cancelBeforeStartRef.current = false;
         lastActivityRef.current = Date.now();
         setMessages((messages) => messages.filter((message) => message.id !== msgId));
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         streamIdRef.current = null;
         setGenState("idle");
-        setChatError("AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
-        void refreshRuntimeStatus();
-      } catch {
+        setActiveSkillIds([]);
+        setChatError(provider === "9router"
+          ? "Gagal membuat ulang respons melalui 9Router. Periksa gateway dan model."
+          : "AzaleaHouse gagal membuat ulang respons dari model lokal. Periksa Ollama lalu coba lagi.");
+        if (provider === "local") void refreshRuntimeStatus();
+      } catch (error) {
         chatStartPendingRef.current = false;
         cancelBeforeStartRef.current = false;
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         setMessages((messages) => messages.filter((message) => message.id !== msgId));
         setGenState("idle");
-        setChatError("Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
+        setActiveSkillIds([]);
+        setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
       }
     })();
-  }, [genState, runtimeStatus, settings.ai, refreshRuntimeStatus]);
+  }, [genState, runtimeStatus, settings.ai, routerConnected, routerModels, refreshRuntimeStatus]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
