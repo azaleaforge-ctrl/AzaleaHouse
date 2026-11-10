@@ -711,3 +711,19 @@ export async function invokeRouterVisionDescribe(args: {
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<string>("router_vision_describe", { payload: args });
 }
+
+
+export interface GeneratedImage {
+  mimeType: string;
+  base64: string;
+}
+
+export async function invokeRouterGenerateImage(args: {
+  model: string;
+  prompt: string;
+  size: "1024x1024" | "1024x1536" | "1536x1024";
+}): Promise<GeneratedImage> {
+  if (!isTauri()) throw new Error("Image generation hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<GeneratedImage>("router_generate_image", { payload: args });
+}
