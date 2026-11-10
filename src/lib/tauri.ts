@@ -691,3 +691,11 @@ export async function invokeWebSearch(query: string): Promise<WebSearchResult[]>
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<WebSearchResult[]>("web_search", { query });
 }
+
+
+/** Launch the verified, downloaded official installer after explicit user approval. */
+export async function invokeInstallUpdate(): Promise<void> {
+  if (!isTauri()) throw new Error("Pemasangan pembaruan hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("install_update");
+}
