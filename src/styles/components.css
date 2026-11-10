@@ -1482,3 +1482,18 @@
 .usage-context-grid small { color: var(--color-text-faint); font-size: 9px; }
 .usage-context-grid .usage-context-total { grid-column: 1 / -1; }
 .usage-context-grid .usage-context-meta { grid-column: 1 / -1; margin: 0; color: var(--color-text-faint); font-size: 10px; }
+
+/* Chat message editing, image preview and answer timing */
+.message-edit { width: min(680px, 100%); display: flex; flex-direction: column; gap: 8px; }
+.message-edit textarea { width: 100%; resize: vertical; min-height: 82px; border: 1px solid var(--glass-border-strong); border-radius: var(--radius-md); background: var(--glass-bg-strong); color: var(--color-text); padding: 11px 13px; font: inherit; font-size: 13px; line-height: 1.5; outline: none; }
+.message-edit textarea:focus { border-color: var(--color-peach-400); }
+.message-edit-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.message-edit-trigger { border: 0; background: transparent; color: var(--color-text-faint); font: inherit; font-size: 11px; cursor: pointer; padding: 3px 6px; }
+.message-edit-trigger:hover { color: var(--color-text); }
+.message-duration { color: var(--color-text-faint); font-size: 10px; padding: 2px 3px; font-variant-numeric: tabular-nums; }
+.message-image-grid { display: flex; flex-wrap: wrap; gap: 7px; max-width: min(520px, 100%); margin-top: 7px; }
+.message-image-thumb { width: 112px; height: 112px; overflow: hidden; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(0,0,0,.15); padding: 0; cursor: zoom-in; }
+.message-image-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-lightbox { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 56px 28px 28px; background: rgba(0,0,0,.82); backdrop-filter: blur(7px); }
+.image-lightbox > img { max-width: min(94vw, 1500px); max-height: 88vh; object-fit: contain; border-radius: 9px; box-shadow: 0 20px 80px rgba(0,0,0,.55); }
+.image-lightbox-close { position: absolute; top: 18px; right: 22px; width: 38px; height: 38px; border: 1px solid rgba(255,255,255,.24); border-radius: 50%; background: rgba(255,255,255,.12); color: #fff; font-size: 25px; line-height: 1; cursor: pointer; }
