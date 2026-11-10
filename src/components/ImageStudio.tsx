@@ -5,10 +5,12 @@ import { invokeRouterGenerateImage } from "../lib/tauri";
 export function ImageStudio({
   connected,
   models,
+  initialPrompt,
   onOpenConnect,
 }: {
   connected: boolean;
   models: RouterModel[];
+  initialPrompt: string;
   onOpenConnect: () => void;
 }) {
   const [model, setModel] = useState("");
@@ -17,6 +19,10 @@ export function ImageStudio({
   const [image, setImage] = useState<{ mimeType: string; base64: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialPrompt.trim()) setPrompt(initialPrompt.trim());
+  }, [initialPrompt]);
 
   useEffect(() => {
     if (models.length === 0) {
@@ -75,6 +81,9 @@ export function ImageStudio({
           </select>
           <p className="row-desc">Pilih model yang mendukung endpoint /images/generations. Tidak semua model 9Router mendukung pembuatan gambar.</p>
 
+          {initialPrompt.trim() ? (
+            <button type="button" className="btn btn--ghost" onClick={() => setPrompt(initialPrompt.trim())}>Gunakan deskripsi AI terakhir</button>
+          ) : null}
           <label className="command-label" htmlFor="image-prompt">Prompt gambar atau cover</label>
           <textarea
             id="image-prompt"
