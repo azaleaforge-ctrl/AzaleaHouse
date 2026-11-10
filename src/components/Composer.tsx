@@ -35,7 +35,7 @@ export function Composer({
   onProfileChange: (p: ProfileId) => void;
   runtimeStatus: RuntimeStatus;
   onAttachFiles: (files: FileList) => void;
-  onOpenCommands: () => void;
+  onOpenCommands: (command?: string) => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -57,7 +57,7 @@ export function Composer({
     }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      if (value.trim().startsWith("/")) onOpenCommands();
+      if (value.trim().startsWith("/")) onOpenCommands(value.trim());
       else if (canSend) onSend();
     }
   };
