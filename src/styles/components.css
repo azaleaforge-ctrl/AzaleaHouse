@@ -1407,3 +1407,42 @@
 .panel-provider-state.is-connected {
   color: var(--color-mint-400);
 }
+
+
+.image-studio-connection {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+}
+.image-studio-connection strong {
+  flex: 1;
+  font-size: 13px;
+}
+.image-prompt {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid var(--glass-border-strong);
+  background: var(--glass-bg-strong);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.image-prompt:focus {
+  border-color: var(--color-peach-400);
+}
+.generated-image {
+  width: 100%;
+  max-height: 620px;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: rgba(0,0,0,.15);
+}
+.image-studio .settings-section > .btn {
+  align-self: flex-start;
+}
