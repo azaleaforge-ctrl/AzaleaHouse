@@ -2,18 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import type { GenState, Message } from "../types";
 import { renderMarkdown } from "../lib/markdown";
 import { IconCheck, IconCopy, IconRefresh } from "./Icons";
+import { invokeLoadAttachmentBase64 } from "../lib/tauri";
 
 function MessageBubble({
   msg,
   isLastAssistant,
   onRegenerate,
+  onEdit,
 }: {
   msg: Message;
   isLastAssistant: boolean;
   onRegenerate: () => void;
+  onEdit: (messageId: string, text: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(msg.text);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<Array<{ name: string; src: string }>>([]);
   const copyTimer = useRef<number | null>(null);
 
   useEffect(
@@ -23,6 +30,21 @@ function MessageBubble({
     [],
   );
 
+  useEffect(() => {
+    let active = true;
+    const imageAttachments = (msg.attachments ?? []).filter((item) => item.format === "image");
+    const load = async () => {
+      const previews = await Promise.all(imageAttachments.map(async (item, index) => {
+        const inline = msg.images?.[index];
+        const base64 = inline || (item.id ? await invokeLoadAttachmentBase64(item.id) : null);
+        if (!base64) return null;
+        return { name: item.name, src: "data:" + (item.mimeType || "image/png") + ";base64," + base64 };
+      }));
+      if (active) setImagePreviews(previews.filter((item): item is { name: string; src: string } => Boolean(item)));
+    };
+    void load();
+    return () => { active = false; };
+  }, [msg.id, msg.attachments, msg.images]);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(msg.text);
@@ -42,20 +64,34 @@ function MessageBubble({
         <span className="msg-author">{msg.role === "assistant" ? "AzaleaHouse" : "Anda"}</span>
         <span className="msg-time">{msg.time}</span>
       </div>
-      {msg.text.trim() ? (
-        <div
-          className="bubble md"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(displayContent) }}
-        />
+      {editing ? (
+        <div className="message-edit">
+          <textarea value={editText} onChange={(event) => setEditText(event.target.value)} rows={Math.max(3, Math.min(10, editText.split("\n").length + 1))} aria-label="Edit pesan" />
+          <div className="message-edit-actions">
+            <button type="button" className="btn" onClick={() => { setEditText(msg.text); setEditing(false); }}>Batal</button>
+            <button type="button" className="btn btn--primary" disabled={!editText.trim()} onClick={() => { setEditing(false); onEdit(msg.id, editText.trim()); }}>Kirim ulang</button>
+          </div>
+        </div>
+      ) : msg.text.trim() ? (
+        <div className="bubble md" dangerouslySetInnerHTML={{ __html: renderMarkdown(displayContent) }} />
       ) : msg.streaming ? (
         <div className="thinking-bubble" role="status" aria-live="polite">
           <span className="thinking-dots" aria-hidden="true"><span /><span /><span /></span>
           <span>{msg.activity || "Sedang menyiapkan jawaban…"}</span>
         </div>
       ) : null}
-      {msg.attachments && msg.attachments.length > 0 ? (
+      {imagePreviews.length ? (
+        <div className="message-image-grid" aria-label="Gambar dalam pesan">
+          {imagePreviews.map((preview) => (
+            <button type="button" className="message-image-thumb" key={preview.name} onClick={() => setSelectedImage(preview.src)} aria-label={"Buka gambar " + preview.name}>
+              <img src={preview.src} alt={preview.name} />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {msg.attachments && msg.attachments.some((attachment) => attachment.format !== "image") ? (
         <div className="message-attachments" aria-label="Lampiran pesan">
-          {msg.attachments.map((attachment, index) => (
+          {msg.attachments.filter((attachment) => attachment.format !== "image").map((attachment, index) => (
             <div className="message-attachment" key={attachment.id ?? attachment.name + "-" + index}>
               <span className="message-attachment-name">{attachment.name}</span>
               <span className="message-attachment-meta">
@@ -67,6 +103,14 @@ function MessageBubble({
             </div>
           ))}
         </div>
+      ) : null}
+      {msg.role === "user" ? (
+        <div className="msg-actions">
+          <button type="button" className="message-edit-trigger" onClick={() => { setEditText(msg.text); setEditing(true); }} aria-label="Edit pesan">✎ Edit</button>
+        </div>
+      ) : null}
+      {msg.durationMs !== undefined && msg.role === "assistant" ? (
+        <div className="message-duration" title="Durasi pembuatan jawaban">◷ {msg.durationMs < 1000 ? msg.durationMs + " ms" : (msg.durationMs / 1000).toFixed(1) + " detik"}</div>
       ) : null}
       {msg.role === "assistant" ? (
         <div className="msg-actions">
@@ -119,6 +163,12 @@ function MessageBubble({
           </section>
         </div>
       ) : null}
+      {selectedImage ? (
+        <div className="image-lightbox" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedImage(null); }}>
+          <button type="button" className="image-lightbox-close" onClick={() => setSelectedImage(null)} aria-label="Tutup gambar">×</button>
+          <img src={selectedImage} alt="Pratinjau gambar ukuran penuh" />
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -128,11 +178,13 @@ export function MessageList({
   genState,
   animAllowed,
   onRegenerate,
+  onEdit,
 }: {
   messages: Message[];
   genState: GenState;
   animAllowed: boolean;
   onRegenerate: () => void;
+  onEdit: (messageId: string, text: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const firstRender = useRef(true);
@@ -162,6 +214,7 @@ export function MessageList({
             msg={m}
             isLastAssistant={m.id === lastAssistantId && genState === "idle"}
             onRegenerate={onRegenerate}
+            onEdit={onEdit}
           />
         ))}
       </div>
