@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AiProvider,
   AiSettings,
   AppSettings,
   GenState,
@@ -7,11 +8,12 @@ import type {
   MessageAttachment,
   ProfileId,
   RuntimeStatus,
+  SkillId,
   View,
 } from "./types";
 import type { Attachment } from "./types";
 import type { UpdateStatus } from "./types";
-import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload, ModelMeta } from "./lib/tauri";
+import type { UpdateInfo, UpdateProgressEvent, StoredMessage, ChatStartPayload, ModelMeta, RouterModel } from "./lib/tauri";
 import {
   FALLBACK_VERSION,
   MAX_FILE_BYTES,
@@ -45,6 +47,11 @@ import {
   invokeSaveAttachmentBytes,
   invokeLoadAttachmentBase64,
   listenChatEvents,
+  invokeConnect9Router,
+  invokeList9RouterModels,
+  invokeDisconnect9Router,
+  invokeRouterChatStart,
+  invokeWebSearch,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackgroundLayer } from "./components/BackgroundLayer";
@@ -59,6 +66,9 @@ import { DocumentsView } from "./components/DocumentsView";
 import { LocalAiView } from "./components/LocalAiView";
 import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
+import { buildSkillsPrompt, detectSkills } from "./data/skills";
+import { CommandDialog } from "./components/CommandDialog";
+import type { CommandDialogMode } from "./components/CommandDialog";
 
 function formatConversationTimestamp(value: string): string {
   const date = new Date(value);
@@ -120,6 +130,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, theme: "dark", blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
   ai: {
+    provider: "local",
+    localModel: "",
+    routerModel: "",
     thinking: false,
     model: "",
     runtimePolicy: "auto",
@@ -148,6 +161,12 @@ export default function App() {
     "runtime_unavailable",
   );
   const [localModels, setLocalModels] = useState<ModelMeta[]>([]);
+  const [routerModels, setRouterModels] = useState<RouterModel[]>([]);
+  const [routerConnected, setRouterConnected] = useState(false);
+  const [routerBusy, setRouterBusy] = useState(false);
+  const [routerError, setRouterError] = useState<string | null>(null);
+  const [commandDialog, setCommandDialog] = useState<CommandDialogMode | null>(null);
+  const [activeSkillIds, setActiveSkillIds] = useState<SkillId[]>([]);
   const [modelListError, setModelListError] = useState<string | null>(null);
   const [systemReduced, setSystemReduced] = useState(false);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
@@ -361,6 +380,18 @@ export default function App() {
           }
           // Drop the previous mock default; installed models now come only from Ollama.
           if (savedAi.model === "gemma4:e2b") savedAi.model = "";
+          const savedProvider = savedAi.provider === "9router" ? "9router" : "local";
+          const legacyModel = typeof savedAi.model === "string" ? savedAi.model : "";
+          if (typeof savedAi.localModel !== "string") savedAi.localModel = savedProvider === "local" ? legacyModel : "";
+          if (typeof savedAi.routerModel !== "string") savedAi.routerModel = savedProvider === "9router" ? legacyModel : "";
+          // 9Router credentials are intentionally session-only; do not restore an unconnected provider as active.
+          if (savedProvider === "9router") {
+            savedAi.provider = "local";
+            savedAi.model = savedAi.localModel;
+          } else {
+            savedAi.provider = "local";
+            savedAi.model = savedAi.localModel;
+          }
           setSettings((current) => ({
             ...current,
             ai: { ...current.ai, ...savedAi },
