@@ -291,7 +291,8 @@ fn build_chat_completion_body(
     let mut body = serde_json::json!({
         "model": model,
         "messages": messages,
-        "stream": true
+        "stream": true,
+        "stream_options": { "include_usage": true }
     });
     if let Some(value) = options.temperature {
         body["temperature"] = serde_json::json!(value.clamp(0.0, 2.0));
@@ -323,7 +324,14 @@ fn process_sse_line(
         let _ = app.emit("azalea:chat_chunk", serde_json::json!({
             "id": id,
             "model": model,
-            "content": content
+            "content": content,
+            "usage": parsed.usage
+        }));
+    } else if let Some(usage) = parsed.usage {
+        let _ = app.emit("azalea:chat_chunk", serde_json::json!({
+            "id": id,
+            "model": model,
+            "usage": usage
         }));
     } else if parsed.has_thinking {
         let _ = app.emit("azalea:chat_chunk", serde_json::json!({
@@ -419,7 +427,7 @@ async fn router_worker(
                     "9Router mengembalikan respons tanpa teks jawaban. Periksa model dan format respons gateway.".to_owned()
                 })?;
                 let _ = app.emit("azalea:chat_chunk", serde_json::json!({
-                    "id": id, "model": payload.model, "content": content
+                    "id": id, "model": payload.model, "content": content, "usage": parsed.usage
                 }));
                 return Ok(());
             }
@@ -659,6 +667,7 @@ mod chat_stream_tests {
             content: Some("Halo".to_owned()),
             has_thinking: false,
             finished: false,
+            usage: None,
         });
     }
 
