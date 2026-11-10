@@ -1109,6 +1109,7 @@ export default function App() {
             : message));
           try {
             const results = await invokeWebSearch(t);
+            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results } : message));
             const sourceContext = results.length
               ? [
                   "HASIL WEB SEARCH (gunakan tanggal yang tercantum, jangan mengarang tanggal):",
