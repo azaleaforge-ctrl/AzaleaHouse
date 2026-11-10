@@ -258,6 +258,7 @@ async fn router_worker(
         let mut stream = response.bytes_stream();
         let mut pending = Vec::<u8>::new();
         let mut cancel = cancel;
+        tokio::pin!(cancel);
         let mut completed = false;
 
         loop {
