@@ -66,7 +66,6 @@ import { ComingSoon } from "./components/ComingSoon";
 import { DocumentsView } from "./components/DocumentsView";
 import { ImageStudio } from "./components/ImageStudio";
 import { LocalAiView } from "./components/LocalAiView";
-import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
 import { buildSkillsPrompt, detectSkills } from "./data/skills";
 import type { SkillId } from "./data/skills";
@@ -829,8 +828,15 @@ export default function App() {
     }
     if (provider === "local") {
       const nextModel = settings.ai.localModel || localModels[0]?.id || "";
+      const selected = localModels.find((item) => item.id === nextModel);
       const visionAvailable = localModels.some((item) => item.id === settings.ai.visionModel && item.vision_supported);
-      patchAi({ provider, model: nextModel, localModel: nextModel, visionModel: visionAvailable ? settings.ai.visionModel : "" });
+      patchAi({
+        provider,
+        model: nextModel,
+        localModel: nextModel,
+        thinking: selected?.thinking_supported ? settings.ai.thinking : false,
+        visionModel: visionAvailable ? settings.ai.visionModel : "",
+      });
       return;
     }
     const nextModel = settings.ai.routerModel || routerModels[0]?.id || "";
