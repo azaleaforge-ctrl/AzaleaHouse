@@ -193,11 +193,47 @@ pub async fn router_chat_start(
 }
 
 
+#[derive(Debug, Default, PartialEq, Serialize, Clone)]
+struct ProviderTokenUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+}
+
+fn parse_token_usage(value: &serde_json::Value) -> Option<ProviderTokenUsage> {
+    let usage = value.get("usage")?;
+    let prompt = usage.get("prompt_tokens").or_else(|| usage.get("input_tokens")).and_then(|v| v.as_u64());
+    let completion = usage.get("completion_tokens").or_else(|| usage.get("output_tokens")).and_then(|v| v.as_u64());
+    let total = usage.get("total_tokens").and_then(|v| v.as_u64());
+    let prompt_details = usage.get("prompt_tokens_details").or_else(|| usage.get("input_tokens_details"));
+    let cache_read = prompt_details.and_then(|v| v.get("cached_tokens"))
+        .or_else(|| usage.get("cache_read_input_tokens"))
+        .or_else(|| usage.get("cache_read_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let cache_creation = prompt_details.and_then(|v| v.get("cache_creation_tokens"))
+        .or_else(|| usage.get("cache_creation_input_tokens"))
+        .or_else(|| usage.get("cache_creation_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let input_tokens = prompt.unwrap_or(0);
+    let output_tokens = completion.unwrap_or(0);
+    if prompt.is_none() && completion.is_none() && total.is_none() && cache_read == 0 && cache_creation == 0 {
+        return None;
+    }
+    Some(ProviderTokenUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens: total.unwrap_or(input_tokens.saturating_add(output_tokens)),
+        cache_read_tokens: cache_read,
+        cache_creation_tokens: cache_creation,
+    })
+}
+
 #[derive(Debug, Default, PartialEq)]
 struct ParsedCompletionChunk {
     content: Option<String>,
     has_thinking: bool,
     finished: bool,
+    usage: Option<ProviderTokenUsage>,
 }
 
 fn content_text(value: &serde_json::Value) -> Option<String> {
@@ -244,7 +280,7 @@ fn parse_completion_chunk(value: &serde_json::Value) -> Result<ParsedCompletionC
         .and_then(|reason| reason.as_str())
         .is_some_and(|reason| !reason.is_empty());
 
-    Ok(ParsedCompletionChunk { content, has_thinking, finished })
+    Ok(ParsedCompletionChunk { content, has_thinking, finished, usage: parse_token_usage(value) })
 }
 
 fn build_chat_completion_body(
