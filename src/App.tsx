@@ -697,6 +697,7 @@ export default function App() {
           });
         }
         streamingMsgIdRef.current = null;
+        streamHasContentRef.current = false;
         setGenState("idle");
         setStreamIdRef(null);
         setChatError(`Respons model terhenti sebelum selesai: ${e.message}`);
@@ -1262,6 +1263,7 @@ export default function App() {
     setGenState("idle");
     setActiveSkillIds([]);
     setStreamIdRef(null);
+    streamHasContentRef.current = false;
   }, []);
 
   useEffect(() => {
