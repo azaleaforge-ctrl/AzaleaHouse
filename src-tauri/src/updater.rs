@@ -206,7 +206,7 @@ fn is_safe_installer_name(name: &str) -> bool {
 pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let client = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
-        .user_agent("AzaleaHouse/0.1")
+        .user_agent("AzaleaHouse/0.2.1")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
@@ -277,7 +277,7 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
         .collect();
 
     let error = if available && assets.is_empty() {
-        Some("Rilis terbaru tidak menyediakan installer Windows yang cocok dengan versi tag dan batas ukuran yang diharapkan. Instalasi tetap terkunci sampai verifikasi tanda tangan resmi tersedia.".to_string())
+        Some("Rilis terbaru tidak menyediakan installer Windows yang cocok dengan versi tag dan batas ukuran yang diharapkan.".to_string())
     } else {
         None
     };
@@ -435,8 +435,8 @@ async fn request_installer_response(
     Ok(fallback_response)
 }
 
-/// Download is manual and constrained to the official release. The output is not executable
-/// through this app until the official signed-updater flow is configured.
+/// Download is manual and constrained to the fixed official repository. A downloaded file
+/// can only be launched by install_update after path, type, size, and PE-header validation.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn download_update(
     app: AppHandle,
@@ -476,7 +476,7 @@ pub async fn download_update(
         .read_timeout(Duration::from_secs(60))
         .timeout(Duration::from_secs(0))
         .no_gzip()
-        .user_agent("AzaleaHouse/0.1")
+        .user_agent("AzaleaHouse/0.2.1")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
