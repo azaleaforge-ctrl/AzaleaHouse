@@ -208,6 +208,7 @@ export function ChatView({
           animAllowed={animAllowed}
           onRegenerate={() => onRegenerate()}
           onEdit={(messageId, text) => onRegenerate({ messageId, text })}
+          onAskUser={(answer) => { void onSend(answer, []); }}
         />
       )}
 
