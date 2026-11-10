@@ -20,6 +20,7 @@ export function Composer({
   onProfileChange,
   runtimeStatus,
   onAttachFiles,
+  onOpenCommands,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -34,6 +35,7 @@ export function Composer({
   onProfileChange: (p: ProfileId) => void;
   runtimeStatus: RuntimeStatus;
   onAttachFiles: (files: FileList) => void;
+  onOpenCommands: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -48,9 +50,15 @@ export function Composer({
   const canSend = (value.trim().length > 0 || hasAttachments) && !busy;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "/" && value.length === 0) {
+      e.preventDefault();
+      onOpenCommands();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      if (canSend) onSend();
+      if (value.trim().startsWith("/")) onOpenCommands();
+      else if (canSend) onSend();
     }
   };
 
