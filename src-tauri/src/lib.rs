@@ -37,6 +37,7 @@ pub fn run() {
             // OpenAI-compatible local 9Router provider
             router::connect_9router,
             router::list_9router_models,
+            router::list_9router_image_models,
             router::disconnect_9router,
             router::router_chat_start,
             router::web_search,
