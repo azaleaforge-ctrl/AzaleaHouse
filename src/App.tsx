@@ -244,6 +244,8 @@ export default function App() {
   const lastActivityRef = useRef(Date.now());
   const runtimeOperationRef = useRef(false);
   const selectedModelRef = useRef(settings.ai.model);
+  const selectedProviderRef = useRef(settings.ai.provider);
+  const routerConnectedRef = useRef(routerConnected);
   const lastAppliedRuntimeConfigRef = useRef<string | null>(null);
   const previousRuntimeGenStateRef = useRef<GenState>("idle");
   const memoryReadyRef = useRef(false);
@@ -298,11 +300,13 @@ export default function App() {
 
   useEffect(() => {
     selectedModelRef.current = settings.ai.model;
-  }, [settings.ai.model]);
+    selectedProviderRef.current = settings.ai.provider;
+    routerConnectedRef.current = routerConnected;
+  }, [settings.ai.model, settings.ai.provider, routerConnected]);
 
   const refreshRuntimeStatus = useCallback(async () => {
-    if (settings.ai.provider === "9router") {
-      const status = routerConnected ? "ready" : "runtime_unavailable";
+    if (selectedProviderRef.current === "9router") {
+      const status = routerConnectedRef.current ? "ready" : "runtime_unavailable";
       setRuntimeStatus(status);
       return status;
     }
@@ -313,7 +317,7 @@ export default function App() {
       if (status === "ready") lastActivityRef.current = Date.now();
     }
     return status;
-  }, [settings.ai.provider, routerConnected]);
+  }, []);
 
   // Versi aplikasi dari Tauri bila tersedia
   useEffect(() => {
@@ -454,6 +458,10 @@ export default function App() {
   // ── Fetch runtime status on mount & model change ──
   useEffect(() => {
     let alive = true;
+    if (settings.ai.provider === "9router") {
+      setRuntimeStatus(routerConnected ? "ready" : "runtime_unavailable");
+      return () => { alive = false; };
+    }
     setRuntimeStatus("loading");
     invokeRuntimeStatus(settings.ai.model).then((status) => {
       if (!alive) return;
