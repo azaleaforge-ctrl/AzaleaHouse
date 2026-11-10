@@ -1806,7 +1806,6 @@ export default function App() {
               selectedModel={settings.ai.localModel}
               onRefreshModels={refreshLocalModels}
               onUseModel={(modelId) => {
-                const nextModel = localModels.find((item) => item.id === modelId);
                 patchAi({
                   provider: "local",
                   model: modelId,
