@@ -72,7 +72,7 @@ export function ChatView({
   attachments: Attachment[];
   onRemoveAttachment: (name: string) => void;
   onAttachFiles: (files: FileList) => void;
-  onOpenCommands: () => void;
+  onOpenCommands: (command?: string) => void;
   provider: AiProvider;
 }) {
   const [draft, setDraft] = useState("");
