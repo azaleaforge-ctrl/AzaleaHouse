@@ -22,7 +22,7 @@ export interface ChatChunkEvent {
   model: string;
   content?: string;
   /** Provider may signal reasoning activity; raw reasoning text is never rendered. */
-  thinking?: string | boolean;
+  thinking?: string | boolean | null;
   done?: boolean;
 }
 
