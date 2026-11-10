@@ -655,10 +655,7 @@ export interface RouterChatPayload {
   model: string;
   messages: Array<{ role: string; content: string; images?: string[]; imageMimeTypes?: string[] }>;
   think: boolean;
-  options: {
-    temperature?: number;
-    top_p?: number;
-  };
+  options: Record<string, never>;
   skillsPrompt?: string;
 }
 
