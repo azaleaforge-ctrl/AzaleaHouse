@@ -1419,19 +1419,33 @@ export default function App() {
   }, [persistConversation, refreshHistory, setActiveConversationId, stopGeneration]);
 
   const installedModel = localModels.find((item) => item.id === settings.ai.model);
-  const model = installedModel
+  const selectedRouterModel = routerModels.find((item) => item.id === settings.ai.model);
+  const model = settings.ai.provider === "9router"
     ? {
-        id: installedModel.id,
-        name: installedModel.name,
-        thinkingSupported: installedModel.thinking_supported,
-        note: installedModel.note,
-      }
-    : {
         id: settings.ai.model,
-        name: settings.ai.model,
-        thinkingSupported: false,
-        note: "Belum terpasang di Ollama lokal",
-      };
+        name: selectedRouterModel?.name || selectedRouterModel?.id || "Pilih model 9Router",
+        thinkingSupported: routerConnected,
+        note: "Model dari 9Router",
+      }
+    : installedModel
+      ? {
+          id: installedModel.id,
+          name: installedModel.name,
+          thinkingSupported: installedModel.thinking_supported,
+          note: installedModel.note,
+        }
+      : {
+          id: settings.ai.model,
+          name: settings.ai.model,
+          thinkingSupported: false,
+          note: "Belum terpasang di Ollama lokal",
+        };
+  const activeModelOptions = settings.ai.provider === "9router"
+    ? routerModels.map((item) => ({ id: item.id, name: item.name || item.id }))
+    : localModels.map((item) => ({ id: item.id, name: item.name }));
+  const activeRuntimeStatus: RuntimeStatus = settings.ai.provider === "9router"
+    ? (routerConnected ? "ready" : "runtime_unavailable")
+    : runtimeStatus;
 
   // ── Manual model unload ──
   const unloadModel = useCallback(async () => {
@@ -1625,7 +1639,7 @@ export default function App() {
         view={view}
         onNavigate={setView}
         onNewChat={newChat}
-        runtimeStatus={runtimeStatus}
+        runtimeStatus={settings.ai.provider === "local" ? runtimeStatus : "runtime_unavailable"}
         version={appVersion}
         onOpenVersionCenter={() => setVersionOpen(true)}
         onUnloadModel={unloadModel}
@@ -1640,14 +1654,10 @@ export default function App() {
               animAllowed={animAllowed}
               modelName={model?.name ?? settings.ai.model}
               modelId={settings.ai.model}
-              availableModels={localModels}
-              onModelChange={(modelId) => {
-                const nextModel = localModels.find((item) => item.id === modelId);
-                patchAi({
-                  model: modelId,
-                  thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
-                });
-              }}
+              availableModels={activeModelOptions}
+              provider={settings.ai.provider}
+              onModelChange={selectModel}
+              onOpenCommands={openSlashCommand}
               onOpenLocalAi={() => setView("local-ai")}
               panelOpen={panelOpen}
               onTogglePanel={() => setPanelOpen((o) => !o)}
@@ -1661,7 +1671,7 @@ export default function App() {
               thinkingSupported={model?.thinkingSupported ?? true}
               profile={settings.ai.profile}
               onProfileChange={applyProfile}
-              runtimeStatus={runtimeStatus}
+              runtimeStatus={activeRuntimeStatus}
               chatError={chatError}
               onDismissChatError={() => setChatError(null)}
               attachments={attachments}
@@ -1697,12 +1707,14 @@ export default function App() {
               models={localModels}
               modelListError={modelListError}
               runtimeStatus={runtimeStatus}
-              selectedModel={settings.ai.model}
+              selectedModel={settings.ai.localModel}
               onRefreshModels={refreshLocalModels}
               onUseModel={(modelId) => {
                 const nextModel = localModels.find((item) => item.id === modelId);
                 patchAi({
+                  provider: "local",
                   model: modelId,
+                  localModel: modelId,
                   thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
                 });
                 setView("chat");
@@ -1748,7 +1760,17 @@ export default function App() {
       {view === "chat" && panelOpen ? (
         <SettingsPanel
           settings={settings.ai}
-          onChange={patchAi}
+          localModels={localModels}
+          routerModels={routerModels}
+          routerConnected={routerConnected}
+          activeSkillIds={activeSkillIds}
+          onChange={(patch) => {
+            if (typeof patch.model === "string") selectModel(patch.model);
+            else patchAi(patch);
+          }}
+          onProviderChange={selectProvider}
+          onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
+          onDisconnect={disconnectRouter}
           onOpenAdvanced={() => setView("settings")}
         />
       ) : null}
@@ -1762,6 +1784,25 @@ export default function App() {
           </div>
         </div>
       ) : null}
+
+      <CommandDialog
+        mode={commandDialog}
+        provider={settings.ai.provider}
+        connected={routerConnected}
+        models={activeModelOptions}
+        selectedModel={settings.ai.model}
+        history={history}
+        busy={routerBusy}
+        error={routerError}
+        onClose={() => setCommandDialog(null)}
+        onModeChange={setCommandDialog}
+        onProviderChange={selectProvider}
+        onModelChange={(modelId) => { selectModel(modelId); setCommandDialog(null); }}
+        onConnect={connectRouter}
+        onDisconnect={disconnectRouter}
+        onOpenSession={(id) => { setCommandDialog(null); void openConversation(id); }}
+        onDeleteSession={(id) => { void deleteConversation(id); }}
+      />
 
       <VersionCenter
         open={versionOpen}
