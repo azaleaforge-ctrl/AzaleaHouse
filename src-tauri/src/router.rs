@@ -7,6 +7,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
+use reqwest::Url;
 use tokio::sync::{oneshot, Mutex};
 
 const ROUTER_BASE: &str = "http://localhost:20128/v1";
@@ -352,4 +353,133 @@ fn process_sse_line(
         }));
     }
     Ok(if finish { Some(true) } else { None })
+}
+
+
+#[derive(Serialize, Clone)]
+pub struct WebSearchResult {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
+fn decode_html(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+}
+
+fn strip_html(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut in_tag = false;
+    for character in value.chars() {
+        match character {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => output.push(character),
+            _ => {}
+        }
+    }
+    decode_html(&output).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn extract_attribute(tag: &str, name: &str) -> Option<String> {
+    let pattern = format!("{name}=\"");
+    let start = tag.find(&pattern)? + pattern.len();
+    let end = tag[start..].find('"')? + start;
+    Some(decode_html(&tag[start..end]))
+}
+
+fn normalize_search_url(raw: &str) -> Option<String> {
+    let candidate = if raw.starts_with("//") {
+        format!("https:{raw}")
+    } else {
+        raw.to_owned()
+    };
+    let parsed = Url::parse(&candidate).ok()?;
+    if parsed.host_str() == Some("duckduckgo.com") && parsed.path().starts_with("/l/") {
+        if let Some((_, target)) = parsed.query_pairs().find(|(key, _)| key == "uddg") {
+            let target = Url::parse(&target).ok()?;
+            if target.scheme() == "https" {
+                return Some(target.to_string());
+            }
+        }
+    }
+    if parsed.scheme() == "https"
+        && parsed.host_str().is_some()
+        && parsed.host_str() != Some("duckduckgo.com")
+    {
+        return Some(parsed.to_string());
+    }
+    None
+}
+
+#[tauri::command]
+pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, String> {
+    let query = query.trim();
+    if query.is_empty() || query.len() > 512 || query.chars().any(char::is_control) {
+        return Err("Kata kunci pencarian tidak valid.".to_owned());
+    }
+
+    let mut url = Url::parse("https://html.duckduckgo.com/html/")
+        .map_err(|error| format!("URL pencarian tidak valid: {error}"))?;
+    url.query_pairs_mut().append_pair("q", query);
+
+    let response = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(20))
+        .user_agent("Mozilla/5.0 AzaleaHouse/0.2.1")
+        .build()
+        .map_err(|error| format!("Tidak dapat menyiapkan pencarian web: {error}"))?
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Pencarian web gagal: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Mesin pencari menolak permintaan: {error}"))?;
+
+    let html = response.text().await
+        .map_err(|error| format!("Hasil pencarian tidak dapat dibaca: {error}"))?;
+    let mut results = Vec::new();
+    let mut cursor = 0usize;
+
+    while results.len() < 6 {
+        let Some(relative) = html[cursor..].find("class=\"result__a\"") else { break };
+        let marker = cursor + relative;
+        let Some(anchor_start) = html[..marker].rfind("<a") else {
+            cursor = marker + 1;
+            continue;
+        };
+        let Some(tag_end_offset) = html[marker..].find('>') else { break };
+        let tag_end = marker + tag_end_offset + 1;
+        let tag = &html[anchor_start..tag_end];
+        let Some(href) = extract_attribute(tag, "href").and_then(|href| normalize_search_url(&href)) else {
+            cursor = tag_end;
+            continue;
+        };
+        let Some(anchor_end_offset) = html[tag_end..].find("</a>") else { break };
+        let anchor_end = tag_end + anchor_end_offset;
+        let title = strip_html(&html[tag_end..anchor_end]);
+        let snippet = html[anchor_end..]
+            .find("class=\"result__snippet\"")
+            .and_then(|offset| {
+                let marker = anchor_end + offset;
+                let start = html[marker..].find('>')? + marker + 1;
+                let end = html[start..].find("</")? + start;
+                Some(strip_html(&html[start..end]))
+            })
+            .unwrap_or_default();
+
+        if !title.is_empty() && !results.iter().any(|item: &WebSearchResult| item.url == href) {
+            results.push(WebSearchResult { title, url: href, snippet });
+        }
+        cursor = anchor_end + 4;
+    }
+
+    Ok(results)
 }
