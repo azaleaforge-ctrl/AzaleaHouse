@@ -483,3 +483,107 @@ pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, String> {
 
     Ok(results)
 }
+
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterVisionRequest {
+    pub model: String,
+    pub prompt: String,
+    pub images: Vec<String>,
+    #[serde(default)]
+    pub image_mime_types: Vec<String>,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn router_vision_describe(
+    credentials: State<'_, RouterCredentials>,
+    payload: RouterVisionRequest,
+) -> Result<String, String> {
+    let key = credentials.0.lock().await.clone()
+        .ok_or_else(|| "9Router belum tersambung. Gunakan /connect terlebih dahulu.".to_owned())?;
+    if payload.model.trim().is_empty() || payload.model.len() > 512 {
+        return Err("Model vision helper tidak valid.".to_owned());
+    }
+    if payload.images.is_empty() || payload.images.len() > 5 {
+        return Err("Vision helper memerlukan 1 sampai 5 gambar per permintaan.".to_owned());
+    }
+    if payload.prompt.len() > 20_000 {
+        return Err("Instruksi analisis gambar terlalu panjang.".to_owned());
+    }
+
+    let mut content = vec![serde_json::json!({
+        "type": "text",
+        "text": if payload.prompt.trim().is_empty() {
+            "Deskripsikan gambar secara akurat. Sebutkan teks yang terbaca, objek, susunan, dan detail penting. Bedakan hal yang terlihat dari dugaan."
+        } else {
+            payload.prompt.as_str()
+        }
+    })];
+
+    for (index, image) in payload.images.iter().enumerate() {
+        if image.is_empty() || image.len() > 24 * 1024 * 1024 {
+            return Err("Ukuran gambar tidak valid atau melebihi 24 MiB dalam Base64.".to_owned());
+        }
+        let mime = payload.image_mime_types.get(index)
+            .map(String::as_str)
+            .unwrap_or("image/png");
+        let mime = match mime {
+            "image/jpeg" | "image/webp" | "image/gif" | "image/png" => mime,
+            _ => "image/png",
+        };
+        content.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{mime};base64,{image}") }
+        }));
+    }
+
+    let body = serde_json::json!({
+        "model": payload.model,
+        "messages": [{
+            "role": "user",
+            "content": content
+        }],
+        "stream": false,
+        "max_tokens": 2048
+    });
+
+    let response = http_client(STREAM_IDLE_TIMEOUT)?
+        .post(format!("{ROUTER_BASE}/chat/completions"))
+        .bearer_auth(&key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("Vision helper 9Router gagal dihubungi: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Model vision helper menolak gambar (HTTP {status}): {}",
+            detail.chars().take(900).collect::<String>()
+        ));
+    }
+
+    let value: serde_json::Value = response.json().await
+        .map_err(|error| format!("Respons vision helper tidak valid: {error}"))?;
+    let message = value.get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .ok_or_else(|| "Vision helper tidak mengembalikan deskripsi gambar.".to_owned())?;
+
+    let description = if let Some(text) = message.as_str() {
+        text.to_owned()
+    } else if let Some(parts) = message.as_array() {
+        parts.iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        String::new()
+    };
+    if description.trim().is_empty() {
+        return Err("Vision helper mengembalikan deskripsi kosong.".to_owned());
+    }
+    Ok(description)
+}
