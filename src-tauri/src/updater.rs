@@ -18,7 +18,9 @@ use tokio::sync::watch;
 const GITHUB_OWNER: &str = "azaleaforge-ctrl";
 const GITHUB_REPO_NAME: &str = "AzaleaHouse";
 const GITHUB_API: &str = "https://api.github.com/repos";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_INSTALLER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 pub struct DownloadToken {
@@ -205,6 +207,7 @@ fn is_safe_installer_name(name: &str) -> bool {
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let client = reqwest::Client::builder()
+        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
         .timeout(HTTP_TIMEOUT)
         .user_agent("AzaleaHouse/0.2.1")
         .build()
@@ -216,7 +219,7 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("Request GitHub gagal: {e}"))?;
+        .map_err(|e| format!("Request GitHub gagal: {}", transport_error_detail(&e)))?;
 
     let status = resp.status();
     let current = app.package_info().version.to_string();
@@ -293,6 +296,33 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
 }
 
 
+
+/// Build the streaming download client without a total request deadline.
+///
+/// Reqwest's async ClientBuilder::timeout(Duration::ZERO) is not a way to
+/// disable the timeout: it creates an immediate deadline. The updater needs
+/// an unbounded total download duration and a bounded idle-read timeout.
+fn build_download_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
+        .read_timeout(DOWNLOAD_READ_TIMEOUT)
+        // Deliberately do not call .timeout(...). Reqwest defaults to no total timeout.
+        .no_gzip()
+        .user_agent("AzaleaHouse/0.2.1")
+        .build()
+        .map_err(|error| format!("Client error: {error}"))
+}
+
+fn transport_error_detail(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "batas waktu koneksi tercapai; periksa koneksi internet atau proxy Windows".to_string()
+    } else if error.is_connect() {
+        "gagal membuka koneksi HTTPS; periksa DNS, firewall, atau proxy Windows".to_string()
+    } else {
+        error.to_string()
+    }
+}
+
 fn allowed_download_host(host: Option<&str>) -> bool {
     matches!(
         host.unwrap_or_default(),
@@ -340,7 +370,8 @@ async fn request_installer_response(
                 ));
             }
             Err(error) => failures.push(format!(
-                "URL rilis langsung (percobaan {attempt}): {error:?}"
+                "URL rilis langsung (percobaan {attempt}): {}",
+                transport_error_detail(&error)
             )),
         }
 
@@ -366,7 +397,7 @@ async fn request_installer_response(
             .send() => response,
     }
     .map_err(|error| {
-        failures.push(format!("GitHub Releases API metadata: {error:?}"));
+        failures.push(format!("GitHub Releases API metadata: {}", transport_error_detail(&error)));
         format!(
             "GitHub gagal diakses melalui URL rilis dan API. Detail: {}",
             failures.join(" | ")
@@ -414,8 +445,9 @@ async fn request_installer_response(
     }
     .map_err(|error| {
         format!(
-            "URL rilis dan endpoint asset API sama-sama gagal. Detail: {}; API: {error:?}",
-            failures.join(" | ")
+            "URL rilis dan endpoint asset API sama-sama gagal. Detail: {}; API: {}",
+            failures.join(" | "),
+            transport_error_detail(&error)
         )
     })?;
 
@@ -471,14 +503,7 @@ pub async fn download_update(
     let dest = cache_dir.join(&asset_name);
     let partial = cache_dir.join(format!("{asset_name}.part"));
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .read_timeout(Duration::from_secs(60))
-        .timeout(Duration::from_secs(0))
-        .no_gzip()
-        .user_agent("AzaleaHouse/0.2.1")
-        .build()
-        .map_err(|e| format!("Client error: {e}"))?;
+    let client = build_download_client()?;
 
     let resp = request_installer_response(&client, &url, &asset_name, &cancel_receiver).await?;
 
@@ -729,6 +754,41 @@ mod tests {
         let result = validate_pe_installer(&path).await;
         let _ = tokio::fs::remove_file(&path).await;
         assert!(result.is_err());
+    }
+
+
+    #[tokio::test]
+    async fn download_client_allows_a_slow_response_without_total_timeout() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        use tokio::time::{sleep, Duration};
+
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind local test server");
+        let address = listener.local_addr().expect("read local test address");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept local request");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await;
+            // A delayed first response byte catches the former zero-second total timeout.
+            sleep(Duration::from_millis(350)).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nOK")
+                .await
+                .expect("write delayed response");
+        });
+
+        let response = build_download_client()
+            .expect("build download client")
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .expect("request should not have an immediate total timeout");
+        assert!(response.status().is_success());
+        assert_eq!(response.text().await.expect("read response body"), "OK");
+        server.await.expect("local test server should finish");
     }
 
     #[test]
