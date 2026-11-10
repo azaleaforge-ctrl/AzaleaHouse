@@ -1518,6 +1518,9 @@ export default function App() {
           thinkingSupported: false,
           note: "Belum terpasang di Ollama lokal",
         };
+  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant" && message.text.trim())?.text ?? "";
+  const lastUserPrompt = [...messages].reverse().find((message) => message.role === "user" && message.text.trim())?.text ?? "";
+
   const activeModelOptions = settings.ai.provider === "9router"
     ? routerModels.map((item) => ({ id: item.id, name: item.name || item.id }))
     : localModels.map((item) => ({ id: item.id, name: item.name }));
@@ -1824,7 +1827,7 @@ export default function App() {
 
         {view === "documents" ? (
           <div className="view-fade">
-            <DocumentsView />
+            <DocumentsView lastAssistantMessage={lastAssistantMessage} lastUserPrompt={lastUserPrompt} />
           </div>
         ) : null}
 
@@ -1833,6 +1836,7 @@ export default function App() {
             <ImageStudio
               connected={routerConnected}
               models={routerModels}
+              initialPrompt={lastAssistantMessage}
               onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
             />
           </div>
