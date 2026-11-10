@@ -1922,7 +1922,6 @@ export default function App() {
           <div className="view-fade">
             <ImageStudio
               connected={routerConnected}
-              models={routerModels}
               initialPrompt={lastAssistantMessage}
               onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
             />
