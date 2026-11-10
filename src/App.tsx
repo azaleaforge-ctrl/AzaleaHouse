@@ -875,7 +875,7 @@ export default function App() {
   }, [settings.ai.localModel, localModels, patchAi]);
 
   const openSlashCommand = useCallback((command?: string) => {
-    const name = command?.trim().split(/\\s+/)[0];
+    const name = command?.trim().split(/\s+/)[0];
     if (name === "/sessions") setCommandDialog("sessions");
     else if (name === "/model") setCommandDialog("model");
     else if (name === "/connect") { setRouterError(null); setCommandDialog("connect"); }
@@ -1454,6 +1454,7 @@ export default function App() {
 
   // ── Manual model unload ──
   const unloadModel = useCallback(async () => {
+    if (settings.ai.provider !== "local") return;
     if (runtimeOperationRef.current) {
       setChatError("Operasi model sedang berlangsung. Tunggu sampai selesai sebelum melepas model.");
       return;
@@ -1494,7 +1495,7 @@ export default function App() {
     } finally {
       runtimeOperationRef.current = false;
     }
-  }, [genState, runtimeStatus, settings.ai.model]);
+  }, [genState, runtimeStatus, settings.ai.provider, settings.ai.model]);
 
   // ── Memory operations (Phase 1 hardening / Phase 4 storage) ──
   const openMemoryFolder = useCallback(async () => {
@@ -1726,7 +1727,9 @@ export default function App() {
               }}
               onBackToChat={() => setView("chat")}
               onModelDeleted={(modelId) => {
-                if (settings.ai.model === modelId) patchAi({ model: "", thinking: false });
+                if (settings.ai.localModel === modelId) {
+                  patchAi({ localModel: "", ...(settings.ai.provider === "local" ? { model: "" } : {}), thinking: false });
+                }
               }}
               modelBusy={genState !== "idle" || runtimeStatus === "loading" || runtimeStatus === "unloading"}
             />
