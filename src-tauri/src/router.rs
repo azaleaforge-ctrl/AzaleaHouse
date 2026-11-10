@@ -998,6 +998,70 @@ mod chat_stream_tests {
     }
 
     #[test]
+    fn recognizes_codex_image_model_ids() {
+        assert!(super::is_codex_image_model("cx/gpt-image-2"));
+        assert!(super::is_codex_image_model("codex/gpt-5.4-image"));
+        assert!(!super::is_codex_image_model("openai/dall-e-3"));
+    }
+
+    #[test]
+    fn extracts_codex_image_result_from_output_item_done_event() {
+        let event = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "image_generation_call",
+                "status": "generating",
+                "output_format": "png",
+                "result": "iVBORw0KGgo="
+            }
+        });
+        let (result, format) = super::codex_image_result(&event).expect("final image item");
+        assert_eq!(result, "iVBORw0KGgo=");
+        assert_eq!(format.as_deref(), Some("png"));
+    }
+
+    #[test]
+    fn extracts_codex_image_result_from_response_completed_event() {
+        let event = json!({
+            "type": "response.completed",
+            "response": {
+                "output": [{
+                    "type": "image_generation_call",
+                    "status": "generating",
+                    "result": "iVBORw0KGgo="
+                }]
+            }
+        });
+        let (result, _) = super::codex_image_result(&event).expect("completed response output");
+        assert_eq!(result, "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn ignores_codex_partial_preview_without_final_result() {
+        let event = json!({
+            "type": "response.image_generation_call.partial_image",
+            "partial_image_b64": "iVBORw0KGgo="
+        });
+        assert!(super::codex_image_result(&event).is_none());
+    }
+
+    #[test]
+    fn decodes_codex_image_result_even_when_item_status_says_generating() {
+        let result = super::decode_codex_image_result("iVBORw0KGgo=", Some("png"))
+            .expect("valid final image bytes");
+        assert_eq!(result.mime_type, "image/png");
+        assert_eq!(result.base64, "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn parses_codex_image_sse_and_ignores_intermediate_progress() {
+        let raw = b"event: response.image_generation_call.partial_image\\ndata: {\\"type\\":\\"response.image_generation_call.partial_image\\",\\"partial_image_b64\\":\\"iVBORw0KGgo=\\"}\\n\\nevent: response.output_item.done\\ndata: {\\"type\\":\\"response.output_item.done\\",\\"item\\":{\\"type\\":\\"image_generation_call\\",\\"status\\":\\"generating\\",\\"result\\":\\"iVBORw0KGgo=\\"}}\\n\\n";
+        let image = super::codex_image_result_from_sse(raw).expect("final image result");
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.base64, "iVBORw0KGgo=");
+    }
+
+    #[test]
     fn accepts_only_https_public_named_hosts_for_generated_image_urls() {
         assert!(super::parse_public_image_url("https://cdn.example.com/output.png").is_ok());
         assert!(super::parse_public_image_url("http://cdn.example.com/output.png").is_err());
