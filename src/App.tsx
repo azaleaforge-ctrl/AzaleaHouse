@@ -1823,6 +1823,7 @@ export default function App() {
           localModels={localModels}
           routerModels={routerModels}
           routerConnected={routerConnected}
+          visionModel={settings.ai.visionModel}
           activeSkillIds={activeSkillIds}
           onChange={(patch) => {
             if (typeof patch.model === "string") selectModel(patch.model);
