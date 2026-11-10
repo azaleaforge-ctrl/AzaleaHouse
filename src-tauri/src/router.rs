@@ -46,6 +46,8 @@ pub struct RouterMessage {
     pub content: String,
     #[serde(default)]
     pub images: Option<Vec<String>>,
+    #[serde(default, rename = "imageMimeTypes")]
+    pub image_mime_types: Option<Vec<String>>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -212,10 +214,15 @@ async fn router_worker(
     for message in payload.messages {
         if let Some(images) = message.images.as_ref().filter(|images| !images.is_empty()) {
             let mut content = vec![serde_json::json!({ "type": "text", "text": message.content })];
-            for image in images.iter().take(5) {
+            for (index, image) in images.iter().take(5).enumerate() {
+                let mime = message.image_mime_types.as_ref()
+                    .and_then(|types| types.get(index))
+                    .map(String::as_str)
+                    .filter(|mime| matches!(*mime, "image/png" | "image/jpeg" | "image/webp" | "image/gif"))
+                    .unwrap_or("image/png");
                 content.push(serde_json::json!({
                     "type": "image_url",
-                    "image_url": { "url": format!("data:image/png;base64,{image}") }
+                    "image_url": { "url": format!("data:{mime};base64,{image}") }
                 }));
             }
             messages.push(serde_json::json!({ "role": message.role, "content": content }));
