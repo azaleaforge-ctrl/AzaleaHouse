@@ -39,7 +39,8 @@ export function SettingsPanel({
 }) {
   const localModel = localModels.find((item) => item.id === settings.model);
   const routerModel = routerModels.find((item) => item.id === settings.model);
-  const thinkingSupported = settings.provider === "9router" ? routerConnected : Boolean(localModel?.thinking_supported);
+  const thinkingSupported = true;
+  const nativeThinkingSupported = settings.provider === "9router" ? false : Boolean(localModel?.thinking_supported);
   const selectedRouterContext = routerModel?.context_length;
   const orderedPlugins = PLUGINS.map((plugin) => ({ ...plugin, ...pluginAvailability(plugin.id, routerConnected, visionModel) }))
     .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
@@ -92,11 +93,11 @@ export function SettingsPanel({
         <FieldRow
           label="Thinking"
           desc={
-            !thinkingSupported
-              ? "Model lokal ini tidak terdeteksi mendukung Thinking."
-              : settings.provider === "9router"
-                ? "Mode instruksi penalaran untuk model provider; kemampuan reasoning bawaan tetap bergantung pada model."
-                : "Aktifkan penalaran bila model lokal mendukungnya."
+            settings.provider === "9router"
+              ? "Thinking Adapter mengirim instruksi penalaran ke model provider, termasuk model yang tidak punya mode reasoning bawaan."
+              : nativeThinkingSupported
+                ? "Aktifkan penalaran bawaan model lokal."
+                : "Thinking Adapter memberi instruksi penalaran pada model lokal ini tanpa mengaktifkan token reasoning khusus."
           }
           control={
             <Switch
