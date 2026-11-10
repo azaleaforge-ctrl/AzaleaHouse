@@ -199,31 +199,6 @@ export function SettingsPanel({
         />
       </section>
 
-      <section className="panel-section">
-        <FieldRow
-          label="Model"
-          desc={settings.provider === "9router"
-            ? "Model yang muncul berasal dari endpoint /v1/models setelah API key tervalidasi."
-            : "Model yang telah terpasang di Ollama lokal."}
-          stacked
-          control={
-            <select
-              className="select select--full"
-              value={settings.model}
-              onChange={(event) => onChange({ model: event.target.value })}
-              aria-label="Model AI"
-              disabled={settings.provider === "9router" ? !routerConnected || routerModels.length === 0 : localModels.length === 0}
-            >
-              {(settings.provider === "9router" ? routerModels : localModels).length === 0
-                ? <option value="">{settings.provider === "9router" ? "Belum ada model 9Router" : "Belum ada model lokal"}</option>
-                : null}
-              {settings.provider === "9router"
-                ? routerModels.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)
-                : localModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-            </select>
-          }
-        />
-      </section>
 
       <section className="panel-section">
         <div className="panel-head">
@@ -258,6 +233,32 @@ export function SettingsPanel({
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="panel-section">
+        <FieldRow
+          label="Model"
+          desc={settings.provider === "9router"
+            ? "Model yang muncul berasal dari endpoint /v1/models setelah API key tervalidasi."
+            : "Model yang telah terpasang di Ollama lokal."}
+          stacked
+          control={
+            <select
+              className="select select--full"
+              value={settings.model}
+              onChange={(event) => onChange({ model: event.target.value })}
+              aria-label="Model AI"
+              disabled={settings.provider === "9router" ? !routerConnected || routerModels.length === 0 : localModels.length === 0}
+            >
+              {(settings.provider === "9router" ? routerModels : localModels).length === 0
+                ? <option value="">{settings.provider === "9router" ? "Belum ada model 9Router" : "Belum ada model lokal"}</option>
+                : null}
+              {settings.provider === "9router"
+                ? routerModels.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)
+                : localModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+            </select>
+          }
+        />
       </section>
 
       <button type="button" className="link-btn" onClick={onOpenAdvanced}>
