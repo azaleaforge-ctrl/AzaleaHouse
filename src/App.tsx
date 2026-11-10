@@ -132,6 +132,11 @@ async function buildModelMessages(messages: Message[], provider: AiProvider): Pr
   }));
 }
 
+function appendProcessStep(steps: string[] | undefined, step: string): string[] {
+  if (!step.trim() || steps?.[steps.length - 1] === step) return steps ?? [];
+  return [...(steps ?? []), step].slice(-12);
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   appearance: { bgAnimation: true, reducedMotion: false, theme: "dark", blurIntensity: 50 },
   update: { autoCheck: true, channel: "stable" },
@@ -442,6 +447,8 @@ export default function App() {
             sources: message.sources,
             usage: message.usage,
             durationMs: message.duration_ms,
+            processSteps: message.process_steps,
+            thoughtDurationMs: message.thought_duration_ms,
           })));
         }
       }
@@ -775,6 +782,8 @@ export default function App() {
         sources: message.sources,
         usage: message.usage,
         duration_ms: message.durationMs,
+        process_steps: message.processSteps,
+        thought_duration_ms: message.thoughtDurationMs,
       })),
     };
 
@@ -1526,6 +1535,8 @@ export default function App() {
         sources: message.sources,
         usage: message.usage,
         durationMs: message.duration_ms,
+        processSteps: message.process_steps,
+        thoughtDurationMs: message.thought_duration_ms,
       })));
       setAttachments([]);
       setChatError(null);
