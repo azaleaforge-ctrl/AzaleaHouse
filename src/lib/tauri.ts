@@ -24,6 +24,7 @@ export interface ChatChunkEvent {
   /** Provider may signal reasoning activity; raw reasoning text is never rendered. */
   thinking?: string | boolean | null;
   done?: boolean;
+  usage?: ProviderTokenUsage;
 }
 
 export interface ChatErrorEvent {
@@ -36,6 +37,7 @@ export interface ChatDoneEvent {
   id: string;
   prompt_eval?: { total: number; tokens_per_second: number };
   eval?: { total: number; tokens_per_second: number };
+  usage?: ProviderTokenUsage;
 }
 
 export interface ChatStartedEvent {
@@ -209,6 +211,9 @@ export interface StoredMessage {
   text: string;
   time: string;
   attachments?: import("../types").MessageAttachment[];
+  sources?: Array<{ title: string; url: string; snippet: string }>;
+  usage?: ProviderTokenUsage;
+  duration_ms?: number;
 }
 
 /** Dapatkan path .AzaleaMemory yang sedang dipakai. */
