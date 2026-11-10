@@ -832,7 +832,7 @@ export default function App() {
     }
     if (provider === "local") {
       const nextModel = settings.ai.localModel || localModels[0]?.id || "";
-      const visionAvailable = localModels.some((item) => item.id === settings.ai.visionModel && item.vision_supported);
+      const visionAvailable = routerConnected && routerModels.some((item) => item.id === settings.ai.visionModel);
       patchAi({
         provider,
         model: nextModel,
@@ -881,7 +881,7 @@ export default function App() {
       setRouterModels([]);
       setRouterError(null);
       const nextModel = settings.ai.localModel || localModels[0]?.id || "";
-      patchAi({ provider: "local", model: nextModel, thinking: false, localModel: nextModel });
+      patchAi({ provider: "local", model: nextModel, thinking: false, localModel: nextModel, visionModel: "" });
       setCommandDialog(null);
     } catch (error) {
       setRouterError(error instanceof Error ? error.message : "Gagal memutuskan koneksi 9Router.");
@@ -924,7 +924,7 @@ export default function App() {
 
   const prepareModelMessages = useCallback(async (conversationMessages: Message[], provider: AiProvider) => {
     const prepared = await buildModelMessages(conversationMessages);
-    if (provider !== "9router" || !settings.ai.visionModel) return prepared;
+    if (!routerConnected || !settings.ai.visionModel) return prepared;
 
     for (let index = 0; index < prepared.length; index += 1) {
       const current = prepared[index];
@@ -954,7 +954,7 @@ export default function App() {
       prepared[index] = updated;
     }
     return prepared;
-  }, [settings.ai.visionModel]);
+  }, [settings.ai.visionModel, routerConnected]);
 
   const applyProfile = useCallback((p: ProfileId) => {
     const preset = profileById(p);
