@@ -209,7 +209,7 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let client = reqwest::Client::builder()
         .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
         .timeout(HTTP_TIMEOUT)
-        .user_agent("AzaleaHouse/0.2.3")
+        .user_agent("AzaleaHouse/0.2.4")
         .build()
         .map_err(|e| format!("Client error: {e}"))?;
 
@@ -308,7 +308,7 @@ fn build_download_client() -> Result<reqwest::Client, String> {
         .read_timeout(DOWNLOAD_READ_TIMEOUT)
         // Deliberately do not call .timeout(...). Reqwest defaults to no total timeout.
         .no_gzip()
-        .user_agent("AzaleaHouse/0.2.3")
+        .user_agent("AzaleaHouse/0.2.4")
         .build()
         .map_err(|error| format!("Client error: {error}"))
 }
