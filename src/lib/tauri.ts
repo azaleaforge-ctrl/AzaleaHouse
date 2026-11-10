@@ -727,3 +727,16 @@ export async function invokeRouterGenerateImage(args: {
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<GeneratedImage>("router_generate_image", { payload: args });
 }
+
+
+/** Render a Markdown draft into an editable PPTX inside .AzaleaMemory/documents. */
+export async function invokeCreateDocumentPptx(
+  title: string,
+  markdown: string,
+): Promise<SavedDocumentFile> {
+  if (!isTauri()) throw new Error("Pembuatan PPTX hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<SavedDocumentFile>("create_document_pptx", {
+    draft: { title, markdown },
+  });
+}
