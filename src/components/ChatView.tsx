@@ -60,7 +60,7 @@ export function ChatView({
   onSend: (text: string, attachments: Attachment[]) => Promise<boolean>;
   onClearAttachments: () => void;
   onStop: () => void;
-  onRegenerate: () => void;
+  onRegenerate: (edit?: { messageId: string; text: string }) => void;
   thinking: boolean;
   onToggleThinking: () => void;
   thinkingSupported: boolean;
@@ -206,7 +206,8 @@ export function ChatView({
           messages={messages}
           genState={genState}
           animAllowed={animAllowed}
-          onRegenerate={onRegenerate}
+          onRegenerate={() => onRegenerate()}
+          onEdit={(messageId, text) => onRegenerate({ messageId, text })}
         />
       )}
 
