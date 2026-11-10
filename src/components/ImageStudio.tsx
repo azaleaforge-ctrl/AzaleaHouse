@@ -20,6 +20,8 @@ export function ImageStudio({
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoResult, setVideoResult] = useState<GeneratedVideo | null>(null);
   const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoReferenceImage, setVideoReferenceImage] = useState<string | undefined>(undefined);
+  const [videoReferenceName, setVideoReferenceName] = useState("");
   const [videoDuration, setVideoDuration] = useState(8);
   const [videoAspectRatio, setVideoAspectRatio] = useState<"16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3">("16:9");
   const [videoResolution, setVideoResolution] = useState<"480p" | "720p" | "1080p">("720p");
@@ -82,7 +84,7 @@ export function ImageStudio({
     if (!videoModel || !videoPrompt.trim()) return;
     setVideoBusy(true); setVideoError(null); setVideoResult(null);
     try {
-      const result = await invokeRouterGenerateVideo({ model: videoModel, prompt: videoPrompt.trim(), duration: videoDuration, aspectRatio: videoAspectRatio, resolution: videoResolution });
+      const result = await invokeRouterGenerateVideo({ model: videoModel, prompt: videoPrompt.trim(), duration: videoDuration, aspectRatio: videoAspectRatio, resolution: videoResolution, image: videoReferenceImage });
       setVideoResult(result);
     } catch (reason) {
       setVideoError(reason instanceof Error ? reason.message : "Video generation gagal.");
@@ -197,6 +199,21 @@ export function ImageStudio({
             <p className="row-desc">9Router membuat video secara asynchronous dan memeriksa status sampai hasil siap. Model, akses, dan kuota bergantung pada provider yang terhubung.</p>
             <label className="command-label" htmlFor="video-prompt">Deskripsi motion / video</label>
             <textarea id="video-prompt" className="image-prompt" rows={5} value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} maxLength={4000} placeholder="Contoh: Kamera bergerak perlahan mendekati rumah di tepi pantai, ombak bergerak dan awan melintas…" />
+            <label className="command-label" htmlFor="video-reference-image">Gambar referensi (opsional · image-to-video)</label>
+            <input id="video-reference-image" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              if (!file) { setVideoReferenceImage(undefined); setVideoReferenceName(""); return; }
+              if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 20 * 1024 * 1024) {
+                setVideoError("Pilih gambar PNG, JPEG, atau WebP dengan ukuran maksimum 20 MiB.");
+                event.currentTarget.value = "";
+                return;
+              }
+              const reader = new FileReader();
+              reader.onload = () => { setVideoReferenceImage(typeof reader.result === "string" ? reader.result : undefined); setVideoReferenceName(file.name); setVideoError(null); };
+              reader.onerror = () => setVideoError("Gambar referensi tidak dapat dibaca.");
+              reader.readAsDataURL(file);
+            }} />
+            {videoReferenceName ? <p className="row-desc">Frame awal: {videoReferenceName} <button type="button" className="btn btn--ghost" onClick={() => { setVideoReferenceImage(undefined); setVideoReferenceName(""); }}>Hapus</button></p> : null}
             <div className="video-studio-options">
               <label><span>Durasi</span><select className="select select--full" value={videoDuration} onChange={(event) => setVideoDuration(Number(event.target.value))}><option value={5}>5 detik</option><option value={8}>8 detik</option><option value={10}>10 detik</option><option value={12}>12 detik</option><option value={15}>15 detik</option></select></label>
               <label><span>Rasio</span><select className="select select--full" value={videoAspectRatio} onChange={(event) => setVideoAspectRatio(event.target.value as typeof videoAspectRatio)}>{(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"] as const).map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></label>
