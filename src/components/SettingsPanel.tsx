@@ -1,4 +1,5 @@
-import type { AiProvider, AiSettings, SkillId } from "../types";
+import type { AiProvider, AiSettings } from "../types";
+import type { SkillId } from "../data/skills";
 import type { ModelMeta, RouterModel } from "../lib/tauri";
 import { contextOptions, outputOptions } from "../data/mock";
 import { decimalID } from "../lib/format";
