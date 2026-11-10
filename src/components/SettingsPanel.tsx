@@ -1,4 +1,4 @@
-import type { AiProvider, AiSettings } from "../types";
+import type { AiProvider, AiSettings, ProviderTokenUsage } from "../types";
 import type { SkillId } from "../data/skills";
 import type { ModelMeta, RouterModel } from "../lib/tauri";
 import { contextOptions, outputOptions } from "../data/mock";
@@ -10,6 +10,7 @@ import { IconInfo } from "./Icons";
 
 export function SettingsPanel({
   settings,
+  usage,
   localModels,
   routerModels,
   routerConnected,
@@ -24,6 +25,7 @@ export function SettingsPanel({
   onOpenAdvanced,
 }: {
   settings: AiSettings;
+  usage: ProviderTokenUsage;
   localModels: ModelMeta[];
   routerModels: RouterModel[];
   routerConnected: boolean;
@@ -114,14 +116,17 @@ export function SettingsPanel({
         <FieldRow
           label={settings.provider === "9router" ? "Usage context" : "Context window"}
           desc={settings.provider === "9router"
-            ? "Informasi konteks dari metadata model; AzaleaHouse tidak menerapkan batas context window atau output token tambahan pada provider."
+            ? "Akumulasi token untuk percakapan aktif ini. Statistik yang tidak dikirim provider akan tetap ditampilkan sebagai 0."
             : "Jumlah token konteks yang dikirim ke Ollama."}
           stacked
           control={settings.provider === "9router" ? (
-            <div className="path-chip">
-              {selectedRouterContext
-                ? selectedRouterContext.toLocaleString("id-ID") + " token · dari metadata model"
-                : "Batas konteks ditentukan oleh model/provider"}
+            <div className="usage-context-grid">
+              <div><span>Input</span><strong>{usage.input_tokens.toLocaleString("id-ID")}</strong><small>token</small></div>
+              <div><span>Output</span><strong>{usage.output_tokens.toLocaleString("id-ID")}</strong><small>token</small></div>
+              <div><span>Cache read</span><strong>{usage.cache_read_tokens.toLocaleString("id-ID")}</strong><small>token</small></div>
+              <div><span>Cache write</span><strong>{usage.cache_creation_tokens.toLocaleString("id-ID")}</strong><small>token</small></div>
+              <div className="usage-context-total"><span>Total</span><strong>{usage.total_tokens.toLocaleString("id-ID")}</strong><small>token</small></div>
+              {selectedRouterContext ? <p className="usage-context-meta">Context model: {selectedRouterContext.toLocaleString("id-ID")} token (metadata provider)</p> : null}
             </div>
           ) : (
             <select
