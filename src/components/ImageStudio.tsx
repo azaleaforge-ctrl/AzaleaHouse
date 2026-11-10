@@ -179,6 +179,8 @@ export function ImageStudio({
             <img className="generated-image" src={"data:" + image.mimeType + ";base64," + image.base64} alt="Gambar hasil generasi AzaleaHouse" />
             <a className="btn" href={"data:" + image.mimeType + ";base64," + image.base64} download="AzaleaHouse-generated-image.png">Simpan gambar</a>
           </section>
+        ) : null}
+          </>
         ) : (
           <section className="settings-section video-studio">
             <div className="image-studio-connection">
@@ -213,7 +215,6 @@ export function ImageStudio({
             <a className="btn" href={videoResult.url} target="_blank" rel="noopener noreferrer">Buka / unduh video MP4</a>
           </section>
         ) : null}
-          </>
       </div>
     </div>
   );
