@@ -133,6 +133,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     provider: "local",
     localModel: "",
     routerModel: "",
+    visionModel: "",
     thinking: false,
     model: "",
     runtimePolicy: "auto",
@@ -824,12 +825,14 @@ export default function App() {
     }
     if (provider === "local") {
       const nextModel = settings.ai.localModel || localModels[0]?.id || "";
-      patchAi({ provider, model: nextModel, localModel: nextModel });
+      const visionAvailable = localModels.some((item) => item.id === settings.ai.visionModel && item.vision_supported);
+      patchAi({ provider, model: nextModel, localModel: nextModel, visionModel: visionAvailable ? settings.ai.visionModel : "" });
       return;
     }
     const nextModel = settings.ai.routerModel || routerModels[0]?.id || "";
-    patchAi({ provider, model: nextModel, routerModel: nextModel });
-  }, [routerConnected, settings.ai.localModel, settings.ai.routerModel, localModels, routerModels, patchAi]);
+    const visionAvailable = routerModels.some((item) => item.id === settings.ai.visionModel);
+    patchAi({ provider, model: nextModel, routerModel: nextModel, visionModel: visionAvailable ? settings.ai.visionModel : "" });
+  }, [routerConnected, settings.ai.localModel, settings.ai.routerModel, settings.ai.visionModel, localModels, routerModels, patchAi]);
 
   const selectModel = useCallback((modelId: string) => {
     if (settings.ai.provider === "9router") {
