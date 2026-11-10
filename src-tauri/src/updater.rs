@@ -698,8 +698,9 @@ pub fn cancel_download(state: State<'_, DownloadToken>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        installer_matches_release, is_safe_installer_name, is_safe_release_tag,
-        parse_official_installer_url, validate_pe_installer, version_is_newer, MAX_INSTALLER_BYTES,
+        build_download_client, installer_matches_release, is_safe_installer_name,
+        is_safe_release_tag, parse_official_installer_url, validate_pe_installer,
+        version_is_newer, MAX_INSTALLER_BYTES,
     };
 
     const VALID_URL: &str = "https://github.com/azaleaforge-ctrl/AzaleaHouse/releases/download/v0.1.0/AzaleaHouse_0.1.0_x64-setup.exe";
