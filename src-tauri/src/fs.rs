@@ -68,6 +68,10 @@ pub struct ConversationMessage {
     pub usage: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_steps: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_duration_ms: Option<u64>,
 }
 
 /// Payload untuk menyimpan pengaturan (disediakan frontend).
