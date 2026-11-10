@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { changelogV023 } from "../data/mock";
+import { changelogV024 } from "../data/mock";
 import { formatBytes, formatSpeed } from "../lib/format";
 import type { UpdateStatus } from "../types";
 import type { UpdateInfo, UpdateProgressEvent } from "../lib/tauri";
@@ -184,7 +184,7 @@ export function VersionCenter({
           <div className="vc-changelog">
             <h3 className="vc-subtitle">Catatan rilis v{version}</h3>
             <ul className="changelog">
-              {changelogV023.map((item) => (
+              {changelogV024.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
