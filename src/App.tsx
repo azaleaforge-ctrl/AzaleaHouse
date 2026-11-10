@@ -81,10 +81,10 @@ const AUTO_UNLOAD_IDLE_MS = 60 * 60 * 1000;
 const KEEPALIVE_CHECK_MS = 30 * 1000;
 
 /** Compile only recent, relevant attachment excerpts into model context. */
-async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload["messages"]> {
+async function buildModelMessages(messages: Message[], provider: AiProvider): Promise<ChatStartPayload["messages"]> {
   const userMessagesWithAttachments = messages
     .filter((message) => message.role === "user" && Boolean(message.attachments?.length))
-    .slice(-3);
+    .filter((message) => provider === "9router" || messages.slice(-3).some((recent) => recent.id === message.id));
   const selectedIds = new Set(userMessagesWithAttachments.map((message) => message.id));
   const recentAttachments = userMessagesWithAttachments.flatMap((message) => message.attachments ?? []);
   const latestUser = [...messages].reverse().find((message) => message.role === "user");
@@ -938,7 +938,7 @@ export default function App() {
   }, []);
 
   const prepareModelMessages = useCallback(async (conversationMessages: Message[]) => {
-    const prepared = await buildModelMessages(conversationMessages);
+    const prepared = await buildModelMessages(conversationMessages, settings.ai.provider);
     if (!routerConnected || !settings.ai.visionModel) return prepared;
 
     for (let index = 0; index < prepared.length; index += 1) {
@@ -969,7 +969,7 @@ export default function App() {
       prepared[index] = updated;
     }
     return prepared;
-  }, [settings.ai.visionModel, routerConnected]);
+  }, [settings.ai.visionModel, settings.ai.provider, routerConnected]);
 
   const applyProfile = useCallback((p: ProfileId) => {
     const preset = profileById(p);
@@ -1155,7 +1155,6 @@ export default function App() {
             messages: modelMessages,
             think: settings.ai.thinking,
             options: {
-              temperature: settings.ai.temperature,
               top_p: settings.ai.topP,
             },
             skillsPrompt,
@@ -1377,7 +1376,6 @@ export default function App() {
             messages: modelMessages,
             think: settings.ai.thinking,
             options: {
-              temperature: settings.ai.temperature,
               top_p: settings.ai.topP,
             },
             skillsPrompt,
