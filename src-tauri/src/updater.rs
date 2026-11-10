@@ -1,6 +1,5 @@
-//! Temporary hardened manual-download bridge.
-//! This module is not an authenticated updater yet: installer execution is intentionally absent.
-//! Replace this bridge with the official Tauri updater plugin after a signing key is generated.
+//! Hardened manual GitHub Release download and explicitly approved installer launch.
+//! Release installers are unsigned; the UI displays that limitation before execution.
 
 use std::cmp::Ordering as VersionOrdering;
 use std::sync::atomic::{AtomicBool, Ordering};
