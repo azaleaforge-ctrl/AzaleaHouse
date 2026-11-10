@@ -13,7 +13,7 @@ use tokio::sync::{oneshot, Mutex};
 const ROUTER_BASE: &str = "http://localhost:20128/v1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 pub struct RouterCredentials(pub Arc<Mutex<Option<String>>>);
 
@@ -54,8 +54,6 @@ pub struct RouterMessage {
 pub struct RouterOptions {
     #[serde(default)]
     pub temperature: Option<f32>,
-    #[serde(default, rename = "num_predict")]
-    pub max_tokens: Option<i32>,
     #[serde(default)]
     pub top_p: Option<f32>,
 }
@@ -88,7 +86,7 @@ fn http_client(timeout: Duration) -> Result<reqwest::Client, String> {
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(timeout)
         .no_gzip()
-        .user_agent("AzaleaHouse/0.2.1")
+        .user_agent("AzaleaHouse/0.2.3")
         .build()
         .map_err(|error| format!("Tidak dapat menyiapkan koneksi 9Router: {error}"))
 }
@@ -193,6 +191,94 @@ pub async fn router_chat_start(
     Ok(id)
 }
 
+
+#[derive(Debug, Default, PartialEq)]
+struct ParsedCompletionChunk {
+    content: Option<String>,
+    has_thinking: bool,
+    finished: bool,
+}
+
+fn content_text(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_owned());
+    }
+    let parts = value.as_array()?;
+    let text = parts.iter().filter_map(|part| {
+        part.as_str().or_else(|| part.get("text").and_then(|value| value.as_str()))
+    }).collect::<Vec<_>>().join("");
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Normalize the common OpenAI-compatible completion shapes:
+/// streaming delta.content, non-streaming message.content, and text-part arrays.
+/// Reasoning is detected only to drive a neutral UI status; raw chain-of-thought
+/// is deliberately never forwarded to the conversation UI.
+fn parse_completion_chunk(value: &serde_json::Value) -> Result<ParsedCompletionChunk, String> {
+    if let Some(error) = value.get("error") {
+        let detail = error.as_str().map(str::to_owned).unwrap_or_else(|| error.to_string());
+        return Err(format!("9Router: {detail}"));
+    }
+
+    let choice = value.get("choices").and_then(|choices| choices.get(0));
+    let delta = choice.and_then(|choice| choice.get("delta"));
+    let message = choice.and_then(|choice| choice.get("message"));
+    let content_value = delta.and_then(|delta| delta.get("content"))
+        .or_else(|| message.and_then(|message| message.get("content")))
+        .or_else(|| choice.and_then(|choice| choice.get("text")));
+    let content = content_value.and_then(content_text)
+        .filter(|text| !text.trim().is_empty());
+
+    let has_thinking = [
+        delta.and_then(|delta| delta.get("reasoning")),
+        delta.and_then(|delta| delta.get("reasoning_content")),
+        delta.and_then(|delta| delta.get("reasoning_summary")),
+        message.and_then(|message| message.get("reasoning_summary")),
+    ].into_iter().flatten().any(|value| {
+        value.as_str().is_some_and(|text| !text.trim().is_empty())
+            || value.as_array().is_some_and(|parts| !parts.is_empty())
+    });
+
+    let finished = choice.and_then(|choice| choice.get("finish_reason"))
+        .and_then(|reason| reason.as_str())
+        .is_some_and(|reason| !reason.is_empty());
+
+    Ok(ParsedCompletionChunk { content, has_thinking, finished })
+}
+
+fn process_sse_line(
+    app: &tauri::AppHandle,
+    id: &str,
+    model: &str,
+    line: &[u8],
+    has_content: &mut bool,
+) -> Result<Option<bool>, String> {
+    let line = String::from_utf8_lossy(line).trim().to_owned();
+    let Some(data) = line.strip_prefix("data:") else { return Ok(None) };
+    let data = data.trim();
+    if data.is_empty() { return Ok(None); }
+    if data == "[DONE]" { return Ok(Some(true)); }
+
+    let value: serde_json::Value = serde_json::from_str(data)
+        .map_err(|error| format!("Data stream 9Router tidak valid: {error}"))?;
+    let parsed = parse_completion_chunk(&value)?;
+    if let Some(content) = parsed.content {
+        *has_content = true;
+        let _ = app.emit("azalea:chat_chunk", serde_json::json!({
+            "id": id,
+            "model": model,
+            "content": content
+        }));
+    } else if parsed.has_thinking {
+        let _ = app.emit("azalea:chat_chunk", serde_json::json!({
+            "id": id,
+            "model": model,
+            "thinking": true
+        }));
+    }
+    Ok(parsed.finished.then_some(true))
+}
+
 async fn router_worker(
     app: tauri::AppHandle,
     id: String,
@@ -208,7 +294,7 @@ async fn router_worker(
     if payload.think {
         messages.push(serde_json::json!({
             "role": "system",
-            "content": "Gunakan penalaran internal yang teliti sebelum menjawab. Jangan tampilkan chain-of-thought; berikan hasil, alasan ringkas, dan langkah yang dapat diverifikasi."
+            "content": "Gunakan proses analisis internal yang teliti. Jangan mengeluarkan atau menampilkan chain-of-thought mentah. Berikan jawaban akhir dengan kesimpulan dan ringkasan alasan/metode singkat yang dapat diperiksa."
         }));
     }
     for message in payload.messages {
@@ -231,6 +317,8 @@ async fn router_worker(
         }
     }
 
+    // Deliberately omit max_tokens / max_completion_tokens. Provider models own
+    // their response budget; the local Ollama output limit must not truncate them.
     let mut body = serde_json::json!({
         "model": payload.model,
         "messages": messages,
@@ -238,9 +326,6 @@ async fn router_worker(
     });
     if let Some(value) = payload.options.temperature {
         body["temperature"] = serde_json::json!(value.clamp(0.0, 2.0));
-    }
-    if let Some(value) = payload.options.max_tokens {
-        body["max_tokens"] = serde_json::json!(value.clamp(1, 32768));
     }
     if let Some(value) = payload.options.top_p {
         body["top_p"] = serde_json::json!(value.clamp(0.0, 1.0));
@@ -271,15 +356,39 @@ async fn router_worker(
             return Err(format!("9Router mengembalikan HTTP {status}: {detail}"));
         }
 
+        let content_type = response.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        // Some OpenAI-compatible gateways silently downgrade stream=true and
+        // return one regular JSON completion. Accept that shape instead of
+        // finishing with an empty assistant bubble.
+        if content_type.contains("application/json") && !content_type.contains("text/event-stream") {
+            let value: serde_json::Value = response.json().await
+                .map_err(|error| format!("Respons JSON chat 9Router tidak valid: {error}"))?;
+            let parsed = parse_completion_chunk(&value)?;
+            let content = parsed.content.ok_or_else(|| {
+                "9Router mengembalikan respons tanpa teks jawaban. Periksa model dan format respons gateway.".to_owned()
+            })?;
+            let _ = app.emit("azalea:chat_chunk", serde_json::json!({
+                "id": id, "model": payload.model, "content": content
+            }));
+            return Ok(());
+        }
+
         let mut stream = response.bytes_stream();
         let mut pending = Vec::<u8>::new();
-        let mut completed = false;
+        let mut has_content = false;
+        let mut cancelled = false;
+        let mut finished = false;
 
         loop {
             let item = tokio::select! {
                 biased;
                 _ = &mut cancel => {
-                    completed = true;
+                    cancelled = true;
                     break;
                 }
                 item = stream.next() => item,
@@ -290,16 +399,20 @@ async fn router_worker(
 
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let line = pending.drain(..=newline).collect::<Vec<_>>();
-                if let Some(done) = process_sse_line(&app, &id, &payload.model, &line)? {
-                    completed = done;
+                if let Some(done) = process_sse_line(&app, &id, &payload.model, &line, &mut has_content)? {
+                    finished = done;
                     if done { break; }
                 }
             }
-            if completed { break; }
+            if finished { break; }
         }
 
-        if !completed && !pending.is_empty() {
-            let _ = process_sse_line(&app, &id, &payload.model, &pending)?;
+        if !finished && !pending.is_empty() {
+            let _ = process_sse_line(&app, &id, &payload.model, &pending, &mut has_content)?;
+        }
+
+        if !has_content && !cancelled {
+            return Err("Stream 9Router berakhir tanpa mengirim teks jawaban. Model mungkin hanya mengirim status reasoning, atau gateway mengembalikan format stream yang tidak kompatibel.".to_owned());
         }
         Ok::<(), String>(())
     }.await;
@@ -318,56 +431,6 @@ async fn router_worker(
         }
     }
     active_streams.lock().await.remove(&id);
-}
-
-fn process_sse_line(
-    app: &tauri::AppHandle,
-    id: &str,
-    model: &str,
-    line: &[u8],
-) -> Result<Option<bool>, String> {
-    let line = String::from_utf8_lossy(line).trim().to_owned();
-    let Some(data) = line.strip_prefix("data:") else { return Ok(None) };
-    let data = data.trim();
-    if data.is_empty() { return Ok(None); }
-    if data == "[DONE]" { return Ok(Some(true)); }
-
-    let value: serde_json::Value = serde_json::from_str(data)
-        .map_err(|error| format!("Data stream 9Router tidak valid: {error}"))?;
-    if let Some(message) = value.get("error") {
-        let detail = message.as_str().map(str::to_owned).unwrap_or_else(|| message.to_string());
-        return Err(format!("9Router: {detail}"));
-    }
-
-    let delta = value
-        .get("choices")
-        .and_then(|choices| choices.get(0))
-        .and_then(|choice| choice.get("delta"));
-    let content = delta
-        .and_then(|delta| delta.get("content"))
-        .and_then(|content| content.as_str())
-        .map(str::to_owned);
-    let thinking = delta
-        .and_then(|delta| delta.get("reasoning"))
-        .or_else(|| delta.and_then(|delta| delta.get("reasoning_content")))
-        .and_then(|thinking| thinking.as_str())
-        .map(str::to_owned);
-    let finish = value
-        .get("choices")
-        .and_then(|choices| choices.get(0))
-        .and_then(|choice| choice.get("finish_reason"))
-        .and_then(|reason| reason.as_str())
-        .is_some();
-
-    if content.is_some() || thinking.is_some() {
-        let _ = app.emit("azalea:chat_chunk", serde_json::json!({
-            "id": id,
-            "model": model,
-            "content": content,
-            "thinking": thinking
-        }));
-    }
-    Ok(if finish { Some(true) } else { None })
 }
 
 
@@ -500,6 +563,66 @@ pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, String> {
 }
 
 
+
+#[cfg(test)]
+mod chat_stream_tests {
+    use super::{parse_completion_chunk, ParsedCompletionChunk};
+    use serde_json::json;
+
+    #[test]
+    fn parses_openai_streaming_delta_content() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [{"delta": {"content": "Halo"}, "finish_reason": null}]
+        })).expect("valid delta");
+        assert_eq!(parsed, ParsedCompletionChunk {
+            content: Some("Halo".to_owned()),
+            has_thinking: false,
+            finished: false,
+        });
+    }
+
+    #[test]
+    fn parses_text_parts_from_array_content() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [{"delta": {"content": [
+                {"type": "text", "text": "Halo"},
+                {"type": "text", "text": " dunia"}
+            ]}}]
+        })).expect("valid array content");
+        assert_eq!(parsed.content.as_deref(), Some("Halo dunia"));
+    }
+
+    #[test]
+    fn parses_non_streaming_message_content() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [{"message": {"role": "assistant", "content": "Jawaban"}, "finish_reason": "stop"}]
+        })).expect("valid non-stream response");
+        assert_eq!(parsed.content.as_deref(), Some("Jawaban"));
+        assert!(parsed.finished);
+    }
+
+    #[test]
+    fn detects_reasoning_without_returning_raw_reasoning_text() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [{"delta": {"reasoning_content": "private reasoning text"}}]
+        })).expect("valid reasoning chunk");
+        assert!(parsed.has_thinking);
+        assert_eq!(parsed.content, None);
+    }
+
+    #[test]
+    fn recognizes_finish_reason_and_provider_errors() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [{"delta": {}, "finish_reason": "stop"}]
+        })).expect("valid finish");
+        assert!(parsed.finished);
+        let error = parse_completion_chunk(&json!({"error": {"message": "model unavailable"}}))
+            .expect_err("provider error must fail the stream");
+        assert!(error.contains("model unavailable"));
+    }
+}
+
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouterVisionRequest {
@@ -559,8 +682,7 @@ pub async fn router_vision_describe(
             "role": "user",
             "content": content
         }],
-        "stream": false,
-        "max_tokens": 2048
+        "stream": false
     });
 
     let response = http_client(STREAM_IDLE_TIMEOUT)?
