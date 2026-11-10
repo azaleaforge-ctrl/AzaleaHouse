@@ -167,32 +167,15 @@ pub async fn list_9router_image_models(
     fetch_image_models_with_key(&key).await
 }
 
-async fn fetch_video_models_with_key(key: &str) -> Result<Vec<RouterModel>, String> {
-    let response = http_client(REQUEST_TIMEOUT)?
-        .get(format!("{ROUTER_BASE}/models/video"))
-        .bearer_auth(key)
-        .send()
-        .await
-        .map_err(|error| format!("Katalog model video 9Router gagal dihubungi: {error}"))?;
-    let status = response.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Ok(vec![RouterModel {
-            id: "xai/grok-imagine-video".to_owned(),
-            name: Some("Grok Imagine Video".to_owned()),
-            context_length: None,
-            owned_by: Some("xai".to_owned()),
-        }]);
-    }
-    if !status.is_success() {
-        let detail = response.text().await.unwrap_or_default();
-        return Err(format!("Katalog model video 9Router mengembalikan HTTP {status}: {}", detail.chars().take(900).collect::<String>()));
-    }
-    let payload: ModelList = response.json().await
-        .map_err(|error| format!("Katalog model video 9Router tidak valid: {error}"))?;
-    let mut models = payload.data;
-    models.retain(|model| !model.id.trim().is_empty());
-    models.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
-    Ok(models)
+fn fetch_video_models_with_key(_key: &str) -> Vec<RouterModel> {
+    // Current 9Router video skill documents Grok Imagine as the supported
+    // video model. The gateway has no public /models/video discovery route.
+    vec![RouterModel {
+        id: "xai/grok-imagine-video".to_owned(),
+        name: Some("Grok Imagine Video".to_owned()),
+        context_length: None,
+        owned_by: Some("xai".to_owned()),
+    }]
 }
 
 #[tauri::command]
@@ -201,7 +184,7 @@ pub async fn list_9router_video_models(
 ) -> Result<Vec<RouterModel>, String> {
     let key = credentials.0.lock().await.clone()
         .ok_or_else(|| "9Router belum tersambung. Gunakan /connect untuk memasukkan API key.".to_owned())?;
-    fetch_video_models_with_key(&key).await
+    Ok(fetch_video_models_with_key(&key))
 }
 
 #[derive(Deserialize)]
@@ -1471,8 +1454,9 @@ pub async fn router_generate_image(
         "response_format": "b64_json"
     });
     if codex_model {
-        // The 9Router Codex image adapter streams Responses API events.
-        request_body["stream"] = serde_json::json!(true);
+        // The 9Router image route normalizes the upstream Codex Responses/SSE
+        // result to OpenAI Images JSON. Keep the public request non-streaming;
+        // retain the SSE parser below for gateway versions that expose raw events.
         request_body["output_format"] = serde_json::json!("png");
     }
     let mut response = client
