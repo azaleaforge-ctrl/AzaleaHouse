@@ -165,13 +165,19 @@ function DocumentPreview({ title, markdown }: { title: string; markdown: string 
   );
 }
 
-export function DocumentsView() {
+export function DocumentsView({ lastAssistantMessage, lastUserPrompt }: { lastAssistantMessage: string; lastUserPrompt: string }) {
   const [title, setTitle] = useState("Dokumen Baru");
   const [markdown, setMarkdown] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
 
   const readyToExport = title.trim().length > 0 && markdown.trim().length > 0 && !busy;
+  function importLatestAnswer() {
+    if (!lastAssistantMessage.trim()) return;
+    setMarkdown(lastAssistantMessage.trim());
+    setTitle(lastUserPrompt.trim().slice(0, 80) || "Dokumen dari AI");
+    setNotice({ kind: "info", text: "Jawaban AI terakhir dimasukkan ke editor. Periksa format dan isi sebelum ekspor." });
+  }
   const characterCount = markdown.length.toLocaleString("id-ID");
 
   async function saveDocx() {
@@ -245,6 +251,7 @@ export function DocumentsView() {
           <p>Buat DOCX dan PPTX lokal dengan struktur konsisten, atau simpan pratinjau sebagai PDF melalui dialog cetak Windows.</p>
         </div>
         <div className="document-studio-actions">
+          <button type="button" className="btn btn--ghost" onClick={importLatestAnswer} disabled={!lastAssistantMessage.trim()}>Gunakan jawaban AI terakhir</button>
           <button type="button" className="btn btn--ghost" onClick={openFolder}>Buka folder</button>
           <button type="button" className="btn btn--ghost" onClick={savePdf} disabled={!readyToExport}>Cetak / Simpan PDF</button>
           <button type="button" className="btn btn--ghost" onClick={savePptx} disabled={!readyToExport}>
