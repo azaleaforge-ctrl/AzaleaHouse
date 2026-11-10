@@ -16,7 +16,7 @@ export function ImageStudio({
   const [videoModel, setVideoModel] = useState("");
   const [videoModelsBusy, setVideoModelsBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
-  const [videoProgress, setVideoProgress] = useState(0);
+  const [videoProgress, setVideoProgress] = useState<number | null>(null);
   const [videoJobStatus, setVideoJobStatus] = useState("idle");
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoResult, setVideoResult] = useState<GeneratedVideo | null>(null);
@@ -84,10 +84,10 @@ export function ImageStudio({
     let active = true;
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
-      listen<{ status: string; progress: number }>("azalea:video_progress", (event) => {
+      listen<{ status: string; progress?: number | null }>("azalea:video_progress", (event) => {
         if (active) {
           setVideoJobStatus(event.payload.status);
-          setVideoProgress(Math.max(0, Math.min(100, event.payload.progress)));
+          setVideoProgress(typeof event.payload.progress === "number" ? Math.max(0, Math.min(100, event.payload.progress)) : null);
         }
       }),
     ).then((cleanup) => {
@@ -100,7 +100,7 @@ export function ImageStudio({
   const generateVideo = async () => {
     if (!connected) { onOpenConnect(); return; }
     if (!videoModel || !videoPrompt.trim()) return;
-    setVideoBusy(true); setVideoError(null); setVideoResult(null); setVideoProgress(0); setVideoJobStatus("pending");
+    setVideoBusy(true); setVideoError(null); setVideoResult(null); setVideoProgress(null); setVideoJobStatus("pending");
     try {
       const result = await invokeRouterGenerateVideo({ model: videoModel, prompt: videoPrompt.trim(), duration: videoDuration, aspectRatio: videoAspectRatio, resolution: videoResolution, image: videoReferenceImage });
       setVideoResult(result);
@@ -241,8 +241,8 @@ export function ImageStudio({
             <button type="button" className="btn btn--primary" disabled={!connected || !videoModel || !videoPrompt.trim() || videoBusy} onClick={() => void generateVideo()}>{videoBusy ? "Membuat video dan menunggu hasil…" : "Generate motion video"}</button>
             {videoBusy ? (
               <div className="video-job-progress" role="status" aria-live="polite">
-                <div className="video-job-progress-label"><span>{videoJobStatus === "pending" ? "Menunggu antrean" : "Membuat video…"}</span><strong>{videoProgress}%</strong></div>
-                <progress max={100} value={videoProgress} />
+                <div className="video-job-progress-label"><span>{videoJobStatus === "pending" ? "Menunggu antrean" : "Membuat video…"}</span><strong>{videoProgress === null ? "…" : videoProgress + "%"}</strong></div>
+                <progress max={100} value={videoProgress ?? undefined} />
                 <p>Jangan kirim ulang selama tugas berjalan. 9Router memproses video secara asynchronous.</p>
               </div>
             ) : null}
