@@ -175,6 +175,14 @@ async fn fetch_video_models_with_key(key: &str) -> Result<Vec<RouterModel>, Stri
         .await
         .map_err(|error| format!("Katalog model video 9Router gagal dihubungi: {error}"))?;
     let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(vec![RouterModel {
+            id: "xai/grok-imagine-video".to_owned(),
+            name: Some("Grok Imagine Video".to_owned()),
+            context_length: None,
+            owned_by: Some("xai".to_owned()),
+        }]);
+    }
     if !status.is_success() {
         let detail = response.text().await.unwrap_or_default();
         return Err(format!("Katalog model video 9Router mengembalikan HTTP {status}: {}", detail.chars().take(900).collect::<String>()));
