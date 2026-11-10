@@ -1257,14 +1257,14 @@ fn public_image_client(host: &str, address: std::net::SocketAddr) -> Result<reqw
 
 async fn read_response_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     if response.content_length().is_some_and(|length| length > limit as u64) {
-        return Err("File hasil gambar provider melebihi batas 24 MiB.".to_owned());
+        return Err(format!("Payload gambar provider melebihi batas {} MiB.", limit / (1024 * 1024)));
     }
     let mut stream = response.bytes_stream();
     let mut output = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| format!("Data gambar gagal dibaca: {error}"))?;
         if output.len().saturating_add(chunk.len()) > limit {
-            return Err("File hasil gambar provider melebihi batas 24 MiB.".to_owned());
+            return Err(format!("Payload gambar provider melebihi batas {} MiB.", limit / (1024 * 1024)));
         }
         output.extend_from_slice(&chunk);
     }
@@ -1392,6 +1392,7 @@ pub async fn router_generate_image(
     };
 
     let client = http_client(Duration::from_secs(10 * 60))?;
+    let codex_model = is_codex_image_model(&payload.model);
     let mut request_body = serde_json::json!({
         "model": payload.model,
         "prompt": prompt,
@@ -1399,6 +1400,11 @@ pub async fn router_generate_image(
         "n": 1,
         "response_format": "b64_json"
     });
+    if codex_model {
+        // The 9Router Codex image adapter streams Responses API events.
+        request_body["stream"] = serde_json::json!(true);
+        request_body["output_format"] = serde_json::json!("png");
+    }
     let mut response = client
         .post(format!("{ROUTER_BASE}/images/generations"))
         .bearer_auth(&key)
@@ -1432,8 +1438,29 @@ pub async fn router_generate_image(
         ));
     }
 
-    let value: serde_json::Value = response.json().await
+    let content_type = response.headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if content_type.contains("text/event-stream") {
+        let raw = read_response_limited(response, 40 * 1024 * 1024).await?;
+        return codex_image_result_from_sse(&raw);
+    }
+    if content_type.starts_with("image/") || content_type == "application/octet-stream" {
+        let raw = read_response_limited(response, 24 * 1024 * 1024).await?;
+        let fallback = normalize_image_mime(Some(content_type.as_str()));
+        let mime = sniff_image_mime(&raw, fallback);
+        return Ok(GeneratedImage { mime_type: mime.to_owned(), base64: STANDARD.encode(raw) });
+    }
+
+    let raw = read_response_limited(response, 40 * 1024 * 1024).await?;
+    let value: serde_json::Value = serde_json::from_slice(&raw)
         .map_err(|error| format!("Respons image generation tidak valid: {error}"))?;
+    if let Some((encoded, format)) = codex_image_result(&value) {
+        return decode_codex_image_result(&encoded, format.as_deref());
+    }
     let first = value.get("data")
         .and_then(|data| data.get(0))
         .ok_or_else(|| "Endpoint image generation tidak mengembalikan gambar. Pastikan model mendukung /images/generations.".to_owned())?;
