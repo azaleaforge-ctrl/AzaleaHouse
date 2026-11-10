@@ -207,6 +207,8 @@ pub struct RouterVideoRequest {
     pub aspect_ratio: Option<String>,
     #[serde(default)]
     pub resolution: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
