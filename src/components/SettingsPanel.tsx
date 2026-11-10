@@ -4,6 +4,7 @@ import type { ModelMeta, RouterModel } from "../lib/tauri";
 import { contextOptions, outputOptions } from "../data/mock";
 import { decimalID } from "../lib/format";
 import { SKILLS } from "../data/skills";
+import { PLUGINS, pluginAvailability } from "../data/plugins";
 import { FieldRow, Slider, Switch } from "./Controls";
 import { IconInfo } from "./Icons";
 
@@ -12,6 +13,7 @@ export function SettingsPanel({
   localModels,
   routerModels,
   routerConnected,
+  visionModel,
   activeSkillIds,
   onChange,
   onProviderChange,
@@ -23,6 +25,7 @@ export function SettingsPanel({
   localModels: ModelMeta[];
   routerModels: RouterModel[];
   routerConnected: boolean;
+  visionModel: string;
   activeSkillIds: SkillId[];
   onChange: (patch: Partial<AiSettings>) => void;
   onProviderChange: (provider: AiProvider) => void;
@@ -34,6 +37,8 @@ export function SettingsPanel({
   const routerModel = routerModels.find((item) => item.id === settings.model);
   const thinkingSupported = settings.provider === "9router" ? routerConnected : Boolean(localModel?.thinking_supported);
   const selectedRouterContext = routerModel?.context_length;
+  const orderedPlugins = PLUGINS.map((plugin) => ({ ...plugin, ...pluginAvailability(plugin.id, routerConnected, visionModel) }))
+    .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
   const orderedSkills = [...SKILLS].sort((a, b) => {
     const activeDifference = Number(activeSkillIds.includes(b.id)) - Number(activeSkillIds.includes(a.id));
     return activeDifference || a.name.localeCompare(b.name);
@@ -229,6 +234,22 @@ export function SettingsPanel({
               </div>
             );
           })}
+        </div>
+      </section>
+
+      <section className="panel-section">
+        <div className="panel-head">
+          <h3 className="panel-title">Plugins / Tools</h3>
+          <span className="tag">{orderedPlugins.filter((plugin) => plugin.active).length} tersedia</span>
+        </div>
+        <div className="skill-list">
+          {orderedPlugins.map((plugin) => (
+            <div className={"skill-row" + (plugin.active ? " is-active" : "")} key={plugin.id} title={plugin.description}>
+              <span className="skill-state" />
+              <span className="skill-name">{plugin.name}</span>
+              <span className="skill-status">{plugin.active ? "Aktif" : "Standby"}</span>
+            </div>
+          ))}
         </div>
       </section>
 
