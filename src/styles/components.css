@@ -104,31 +104,7 @@
   background: var(--color-lavender-300);
 }
 
-/* Karet streaming (kelas siap pakai untuk Fase 2) */
-.stream-caret::after {
-  content: "";
-  display: inline-block;
-  width: 2px;
-  height: 1.05em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  background: var(--color-peach-300);
-  border-radius: 1px;
-}
-.bubble.is-streaming::after {
-  content: "";
-  display: inline-block;
-  width: 2px;
-  height: 1.05em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  background: var(--color-peach-300);
-  animation: pulse-caret 1.2s ease-in-out infinite;
-}
-@keyframes pulse-caret {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
+/* Jawaban streaming memakai teks biasa; indikator caret dihilangkan. */
 
 /* ---- Thinking section (chain-of-thought) ---- */
 .thinking-section {

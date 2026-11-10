@@ -59,6 +59,8 @@ export interface Message {
   time: string;
   /** Apakah pesan ini masih sedang distreaming */
   streaming?: boolean;
+  /** Status proses sementara; tidak disimpan sebagai isi pesan. */
+  activity?: string;
   /** Gambar lampiran (base64) untuk vision; hanya disimpan selama runtime. */
   images?: string[];
   /** Metadata/teks lampiran yang ikut tersimpan bersama percakapan. */

@@ -272,25 +272,27 @@ export function SettingsScreen({
               </select>
             }
           />
-          <FieldRow
-            label="Batas output"
-            control={
-              <select
-                className="select"
-                value={ai.maxOutputTokens}
-                onChange={(e) =>
-                  onChange({ ai: { ...ai, maxOutputTokens: Number(e.target.value) } })
-                }
-                aria-label="Batas output"
-              >
-                {outputOptions.map((o) => (
-                  <option key={o} value={o}>
-                    {o.toLocaleString("id-ID")} token
-                  </option>
-                ))}
-              </select>
-            }
-          />
+          {ai.provider === "local" ? (
+            <FieldRow
+              label="Batas output"
+              control={
+                <select
+                  className="select"
+                  value={ai.maxOutputTokens}
+                  onChange={(e) =>
+                    onChange({ ai: { ...ai, maxOutputTokens: Number(e.target.value) } })
+                  }
+                  aria-label="Batas output lokal"
+                >
+                  {outputOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o.toLocaleString("id-ID")} token
+                    </option>
+                  ))}
+                </select>
+              }
+            />
+          ) : null}
           <FieldRow
             label="Temperature"
             stacked
