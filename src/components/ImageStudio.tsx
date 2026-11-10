@@ -222,7 +222,7 @@ export function ImageStudio({
               {videoModels.length === 0 ? <option value="">{videoModelsBusy ? "Memuat katalog video…" : "Tidak ada model video yang tersedia"}</option> : null}
               {videoModels.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
             </select>
-            <p className="row-desc">9Router membuat video secara asynchronous dan memeriksa status sampai hasil siap. Model, akses, dan kuota bergantung pada provider yang terhubung.</p>
+            <p className="row-desc">Video dibuat sebagai tugas asynchronous sampai MP4 siap. Model default 9Router adalah xAI Grok Imagine Video; kamu harus sudah menghubungkan akun xAI di dashboard 9Router (OAuth Grok Build atau API key xAI). Akses video dan kuotanya mengikuti paket akun tersebut.</p>
             <label className="command-label" htmlFor="video-prompt">Deskripsi motion / video</label>
             <textarea id="video-prompt" className="image-prompt" rows={5} value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} maxLength={4000} placeholder="Contoh: Kamera bergerak perlahan mendekati rumah di tepi pantai, ombak bergerak dan awan melintas…" />
             <label className="command-label" htmlFor="video-reference-image">Gambar referensi (opsional · image-to-video)</label>
