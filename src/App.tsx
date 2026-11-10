@@ -793,6 +793,67 @@ export default function App() {
     setSettings((s) => ({ ...s, ai: { ...s.ai, ...patch } }));
   }, []);
 
+  const selectProvider = useCallback((provider: AiProvider) => {
+    if (provider === "9router" && !routerConnected) {
+      setCommandDialog("connect");
+      setRouterError("Masukkan API key dan hubungkan 9Router sebelum memilih provider ini.");
+      return;
+    }
+    if (provider === "local") {
+      const nextModel = settings.ai.localModel || localModels[0]?.id || "";
+      patchAi({ provider, model: nextModel, localModel: nextModel });
+      return;
+    }
+    const nextModel = settings.ai.routerModel || routerModels[0]?.id || "";
+    patchAi({ provider, model: nextModel, routerModel: nextModel });
+  }, [routerConnected, settings.ai.localModel, settings.ai.routerModel, localModels, routerModels, patchAi]);
+
+  const selectModel = useCallback((modelId: string) => {
+    if (settings.ai.provider === "9router") {
+      patchAi({ model: modelId, routerModel: modelId });
+    } else {
+      patchAi({ model: modelId, localModel: modelId });
+    }
+  }, [settings.ai.provider, patchAi]);
+
+  const connectRouter = useCallback(async (apiKey: string) => {
+    setRouterBusy(true);
+    setRouterError(null);
+    try {
+      const available = await invokeConnect9Router(apiKey);
+      setRouterModels(available);
+      setRouterConnected(true);
+      const nextModel = settings.ai.routerModel && available.some((item) => item.id === settings.ai.routerModel)
+        ? settings.ai.routerModel
+        : available[0]?.id ?? "";
+      patchAi({ provider: "9router", model: nextModel, routerModel: nextModel });
+      setCommandDialog(null);
+      setRouterError(null);
+    } catch (error) {
+      setRouterError(error instanceof Error ? error.message : "Koneksi 9Router gagal.");
+    } finally {
+      setRouterBusy(false);
+    }
+  }, [settings.ai.routerModel, patchAi]);
+
+  const disconnectRouter = useCallback(async () => {
+    try {
+      await invokeDisconnect9Router();
+      setRouterConnected(false);
+      setRouterModels([]);
+      setRouterError(null);
+      const nextModel = settings.ai.localModel || localModels[0]?.id || "";
+      patchAi({ provider: "local", model: nextModel, thinking: false, localModel: nextModel });
+      setCommandDialog(null);
+    } catch (error) {
+      setRouterError(error instanceof Error ? error.message : "Gagal memutuskan koneksi 9Router.");
+    }
+  }, [settings.ai.localModel, localModels, patchAi]);
+
+  const openSlashCommand = useCallback(() => {
+    setCommandDialog("menu");
+  }, []);
+
   const applyProfile = useCallback((p: ProfileId) => {
     const preset = profileById(p);
     setSettings((s) => ({
