@@ -15,7 +15,7 @@ const statusChip: Record<UpdateStatus, { label: string; cls: string }> = {
   update_available: { label: "Update tersedia", cls: "tag tag--info" },
   downloading: { label: "Mengunduh…", cls: "tag tag--info" },
   downloaded: { label: "Unduhan selesai — instalasi terkunci", cls: "tag tag--warn" },
-  installing: { label: "Memasang…", cls: "tag tag--info" },
+  installing: { label: "Menjalankan installer…", cls: "tag tag--info" },
   offline: { label: "Luring", cls: "tag tag--warn" },
   error: { label: "Gagal", cls: "tag tag--warn" },
 };
@@ -30,6 +30,7 @@ export function VersionCenter({
   onCheck,
   onDownload,
   onCancelDownload,
+  onInstall,
 }: {
   open: boolean;
   onClose: () => void;
@@ -40,6 +41,7 @@ export function VersionCenter({
   onCheck: () => void;
   onDownload: () => void;
   onCancelDownload: () => void;
+  onInstall: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement | null>(null);
 
@@ -212,20 +214,23 @@ export function VersionCenter({
               Unduh Pembaruan
             </button>
           ) : null}
+          {updateStatus === "downloaded" ? (
+            <button type="button" className="btn btn--primary" onClick={onInstall}>
+              <IconDownload size={15} />
+              Pasang & Tutup Aplikasi
+            </button>
+          ) : null}
         </div>
         {updateStatus === "downloaded" ? (
           <div className="vc-privacy" role="status">
             <IconLock size={16} />
             <p>
-              Installer telah diunduh, tetapi AzaleaHouse tidak akan menjalankannya sebelum
-              verifikasi tanda tangan resmi dikonfigurasi. Ini untuk mencegah installer yang
-              belum terverifikasi dieksekusi.
+              Installer sudah diunduh dan header Windows PE sudah diperiksa. Rilis saat ini belum ditandatangani secara digital; Windows SmartScreen atau antivirus dapat menampilkan peringatan. Jalankan hanya bila kamu mempercayai rilis resmi AzaleaHouse.
             </p>
           </div>
         ) : null}
         <p className="vc-note">
-          Pemeriksaan versi dan unduhan metadata tidak memasang update otomatis. Instalasi tetap
-          terkunci sampai integrasi updater resmi dengan tanda tangan tervalidasi selesai.
+          Pemeriksaan dan unduhan tetap manual. Installer hanya dijalankan setelah tombol Pasang ditekan; aplikasi akan ditutup agar installer dapat memperbarui file program.
         </p>
       </div>
     </div>
