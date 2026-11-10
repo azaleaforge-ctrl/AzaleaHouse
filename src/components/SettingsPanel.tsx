@@ -179,23 +179,20 @@ export function SettingsPanel({
       <section className="panel-section">
         <FieldRow
           label="Vision helper"
-          desc={settings.provider === "9router"
-            ? "Model multimodal tambahan untuk membaca gambar lalu mengirim ringkasannya ke model utama yang hanya mendukung teks. Pilih model 9Router yang memang menerima gambar."
-            : "Model lokal yang mendukung vision dapat dipilih sebagai model utama melalui AI Local."}
+          desc="Vision helper melalui 9Router dapat membaca gambar untuk model chat lokal maupun remote yang hanya mendukung teks. Pilih model helper yang memiliki kemampuan vision."
           stacked
-          control={settings.provider === "9router" ? (
+          control={routerConnected ? (
             <select
               className="select select--full"
               value={settings.visionModel}
               onChange={(event) => onChange({ visionModel: event.target.value })}
               aria-label="Vision helper model"
-              disabled={!routerConnected}
             >
               <option value="">Tidak menggunakan helper</option>
               {routerModels.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
             </select>
           ) : (
-            <div className="path-chip">Vision langsung mengikuti kemampuan model Ollama yang dipilih.</div>
+            <div className="path-chip">Hubungkan 9Router melalui /connect untuk memakai Vision Bridge. Model vision lokal yang mendukung gambar tetap dapat dipakai langsung.</div>
           )}
         />
       </section>
