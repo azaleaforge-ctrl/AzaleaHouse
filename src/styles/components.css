@@ -1523,3 +1523,30 @@
 .video-job-progress-label strong { color: var(--color-text); font-variant-numeric: tabular-nums; }
 .video-job-progress progress { display: block; width: 100%; height: 8px; accent-color: var(--color-peach-400); }
 .video-job-progress p { margin: 7px 0 0; color: var(--color-text-faint); font-size: 10px; line-height: 1.5; }
+
+
+/* Safe, expandable process timeline; never renders model chain-of-thought. */
+.thought-summary {
+  width: min(680px, 100%);
+  margin: 5px 0 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,.035);
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.thought-summary summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.thought-summary summary::-webkit-details-marker { display: none; }
+.thought-summary summary::before { content: "✳"; color: var(--color-peach-400); }
+.thought-summary[open] summary { color: var(--color-text); }
+.thought-summary-count { margin-left: auto; color: var(--color-text-faint); font-size: 10px; }
+.thought-summary ol { margin: 9px 0 2px 21px; padding: 0 0 0 8px; border-left: 1px solid var(--glass-border-strong); }
+.thought-summary li { padding: 3px 0 3px 5px; line-height: 1.5; }
