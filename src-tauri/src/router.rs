@@ -735,6 +735,21 @@ mod chat_stream_tests {
     }
 
     #[test]
+    fn accepts_only_https_public_named_hosts_for_generated_image_urls() {
+        assert!(super::validate_public_image_url("https://cdn.example.com/output.png").is_ok());
+        assert!(super::validate_public_image_url("http://cdn.example.com/output.png").is_err());
+        assert!(super::validate_public_image_url("https://127.0.0.1/private.png").is_err());
+        assert!(super::validate_public_image_url("https://localhost/private.png").is_err());
+        assert!(super::validate_public_image_url("https://internal.local/image.png").is_err());
+    }
+
+    #[test]
+    fn normalizes_common_image_content_types() {
+        assert_eq!(super::normalize_image_mime(Some("image/jpeg")), "image/jpeg");
+        assert_eq!(super::normalize_image_mime(Some("image/webp; charset=binary")), "image/webp");
+        assert_eq!(super::normalize_image_mime(Some("application/octet-stream")), "image/png");
+    }
+    #[test]
     fn parses_provider_input_output_and_cache_usage() {
         let parsed = parse_completion_chunk(&json!({
             "choices": [],
@@ -992,10 +1007,22 @@ pub async fn router_generate_image(
             .user_agent("AzaleaHouse/0.2.4")
             .build()
             .map_err(|error| format!("Tidak dapat menyiapkan unduhan hasil gambar: {error}"))?;
-        let image_response = image_client.get(safe_url).send().await
+        let mut current_url = safe_url;
+        let mut image_response = image_client.get(current_url.clone()).send().await
             .map_err(|error| format!("URL hasil gambar tidak dapat diunduh: {error}"))?;
+        for _ in 0..5 {
+            if !image_response.status().is_redirection() { break; }
+            let location = image_response.headers().get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| "Server hasil gambar mengirim redirect tanpa lokasi.".to_owned())?;
+            current_url = current_url.join(location)
+                .map_err(|_| "URL redirect hasil gambar tidak valid.".to_owned())?;
+            current_url = validate_public_image_url(current_url.as_str())?;
+            image_response = image_client.get(current_url.clone()).send().await
+                .map_err(|error| format!("Redirect hasil gambar gagal diunduh: {error}"))?;
+        }
         if !image_response.status().is_success() {
-            return Err(format!("Server hasil gambar mengembalikan HTTP {}. Redirect tidak diikuti untuk menjaga keamanan.", image_response.status()));
+            return Err(format!("Server hasil gambar mengembalikan HTTP {} setelah redirect.", image_response.status()));
         }
         if image_response.content_length().is_some_and(|length| length > 24 * 1024 * 1024) {
             return Err("File gambar provider melebihi batas 24 MiB.".to_owned());
