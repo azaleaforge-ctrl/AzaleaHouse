@@ -52,6 +52,14 @@ export interface ProfileInfo {
   thinking: boolean;
 }
 
+export interface ProviderTokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -67,6 +75,9 @@ export interface Message {
   attachments?: MessageAttachment[];
   /** Web results attached to the answer for a clickable source popover. */
   sources?: Array<{ title: string; url: string; snippet: string }>;
+  usage?: ProviderTokenUsage;
+  startedAtMs?: number;
+  durationMs?: number;
 }
 
 /** Status generasi respons model lokal. */
