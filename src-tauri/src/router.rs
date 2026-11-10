@@ -239,14 +239,23 @@ async fn router_worker(
         body["top_p"] = serde_json::json!(value.clamp(0.0, 1.0));
     }
 
+    let mut cancel = cancel;
+    tokio::pin!(cancel);
+
     let result = async {
-        let response = http_client(STREAM_IDLE_TIMEOUT)?
+        let client = http_client(STREAM_IDLE_TIMEOUT)?;
+        let request = client
             .post(format!("{ROUTER_BASE}/chat/completions"))
             .bearer_auth(&api_key)
             .json(&body)
-            .send()
-            .await
-            .map_err(|error| format!("Koneksi chat 9Router gagal: {error}"))?;
+            .send();
+        tokio::pin!(request);
+        let response = tokio::select! {
+            biased;
+            _ = &mut cancel => return Ok::<(), String>(()),
+            response = &mut request => response
+                .map_err(|error| format!("Koneksi chat 9Router gagal: {error}"))?,
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -257,8 +266,6 @@ async fn router_worker(
 
         let mut stream = response.bytes_stream();
         let mut pending = Vec::<u8>::new();
-        let mut cancel = cancel;
-        tokio::pin!(cancel);
         let mut completed = false;
 
         loop {
