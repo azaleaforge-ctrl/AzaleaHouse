@@ -103,10 +103,12 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
 
   return Promise.all(messages.map(async (message) => {
     let images: string[] | undefined;
+    let imageMimeTypes: string[] | undefined;
     const imageLimit = imageSlotsByMessage.get(message.id) ?? 0;
     if (message.role === "user" && selectedIds.has(message.id) && imageLimit > 0) {
       if (message.images?.length) {
         images = message.images.slice(0, imageLimit);
+        imageMimeTypes = (message.attachments ?? []).filter((attachment) => attachment.format === "image").slice(0, imageLimit).map((attachment) => attachment.mimeType || "image/png");
       } else {
         const imageAttachments = (message.attachments ?? [])
           .filter((attachment) => attachment.format === "image" && attachment.id)
@@ -116,13 +118,16 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
           return base64 ?? "";
         }));
         const available = loaded.filter(Boolean);
-        if (available.length) images = available;
+        if (available.length) {
+          images = available;
+          imageMimeTypes = imageAttachments.filter((_, index) => Boolean(loaded[index])).map((attachment) => attachment.mimeType || "image/png");
+        }
       }
     }
     return {
       role: message.role,
       content: message.text + (message.id === latestUser?.id ? attachmentContext : ""),
-      ...(images?.length ? { images } : {}),
+      ...(images?.length ? { images, imageMimeTypes } : {}),
     };
   }));
 }
@@ -827,13 +832,11 @@ export default function App() {
     }
     if (provider === "local") {
       const nextModel = settings.ai.localModel || localModels[0]?.id || "";
-      const selected = localModels.find((item) => item.id === nextModel);
       const visionAvailable = localModels.some((item) => item.id === settings.ai.visionModel && item.vision_supported);
       patchAi({
         provider,
         model: nextModel,
         localModel: nextModel,
-        thinking: selected?.thinking_supported ? settings.ai.thinking : false,
         visionModel: visionAvailable ? settings.ai.visionModel : "",
       });
       return;
@@ -847,8 +850,7 @@ export default function App() {
     if (settings.ai.provider === "9router") {
       patchAi({ model: modelId, routerModel: modelId });
     } else {
-      const selected = localModels.find((item) => item.id === modelId);
-      patchAi({ model: modelId, localModel: modelId, thinking: selected?.thinking_supported ? settings.ai.thinking : false });
+      patchAi({ model: modelId, localModel: modelId });
     }
   }, [settings.ai.provider, settings.ai.thinking, localModels, patchAi]);
 
@@ -1123,7 +1125,7 @@ export default function App() {
             messages: skillsPrompt
               ? [{ role: "system", content: skillsPrompt }, ...modelMessages]
               : modelMessages,
-            think: settings.ai.thinking,
+            think: settings.ai.thinking && Boolean(localModels.find((item) => item.id === settings.ai.model)?.thinking_supported),
             runtimePolicy: settings.ai.runtimePolicy,
             options: {
               temperature: settings.ai.temperature,
@@ -1324,7 +1326,7 @@ export default function App() {
           const payload: ChatStartPayload = {
             model: settings.ai.model,
             messages: modelMessages,
-            think: settings.ai.thinking,
+            think: settings.ai.thinking && Boolean(localModels.find((item) => item.id === settings.ai.model)?.thinking_supported),
             runtimePolicy: settings.ai.runtimePolicy,
             options: {
               temperature: settings.ai.temperature,
@@ -1384,7 +1386,7 @@ export default function App() {
         setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
       }
     })();
-  }, [genState, runtimeStatus, settings.ai, routerConnected, routerModels, refreshRuntimeStatus, prepareModelMessages]);
+  }, [genState, runtimeStatus, settings.ai, routerConnected, routerModels, localModels, refreshRuntimeStatus, prepareModelMessages]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
@@ -1733,7 +1735,7 @@ export default function App() {
         view={view}
         onNavigate={setView}
         onNewChat={newChat}
-        runtimeStatus={settings.ai.provider === "local" ? runtimeStatus : "runtime_unavailable"}
+        runtimeStatus={settings.ai.provider === "local" ? runtimeStatus : routerConnected ? "ready" : "runtime_unavailable"}
         version={appVersion}
         onOpenVersionCenter={() => setVersionOpen(true)}
         onUnloadModel={unloadModel}
@@ -1762,7 +1764,7 @@ export default function App() {
               onRegenerate={regenerate}
               thinking={settings.ai.thinking}
               onToggleThinking={() => patchAi({ thinking: !settings.ai.thinking })}
-              thinkingSupported={model?.thinkingSupported ?? true}
+              thinkingSupported={true}
               profile={settings.ai.profile}
               onProfileChange={applyProfile}
               runtimeStatus={activeRuntimeStatus}
@@ -1809,7 +1811,6 @@ export default function App() {
                   provider: "local",
                   model: modelId,
                   localModel: modelId,
-                  thinking: nextModel?.thinking_supported ? settings.ai.thinking : false,
                 });
                 setView("chat");
               }}
