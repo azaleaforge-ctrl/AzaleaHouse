@@ -39,6 +39,7 @@ import {
   invokeBackupMemory,
   invokeCheckUpdate,
   invokeDownloadUpdate,
+  invokeInstallUpdate,
   invokeCancelDownload,
   listenUpdateProgress,
   invokeUnloadModel,
@@ -1616,6 +1617,19 @@ export default function App() {
     }
   }, []);
 
+  const installUpdate = useCallback(async () => {
+    setUpdateStatus("installing");
+    setUpdateInfo((previous) => previous ? { ...previous, error: null } : previous);
+    try {
+      await invokeInstallUpdate();
+      // The Rust command starts the installer and requests application exit.
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUpdateInfo((previous) => previous ? { ...previous, error: message || "Installer gagal dijalankan." } : previous);
+      setUpdateStatus("error");
+    }
+  }, []);
+
   // Listen for download progress events
   useEffect(() => {
     const cleanup = listenUpdateProgress((e) => {
@@ -1821,6 +1835,7 @@ export default function App() {
         onCheck={checkForUpdate}
         onDownload={downloadUpdate}
         onCancelDownload={cancelDownload}
+        onInstall={installUpdate}
       />
       </div>
     </ErrorBoundary>
