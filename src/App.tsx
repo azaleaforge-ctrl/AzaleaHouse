@@ -1286,7 +1286,7 @@ export default function App() {
   }, [commandDialog, versionOpen, genState, stopGeneration]);
 
   // ── Regenerate ──
-  const regenerate = useCallback(() => {
+  const regenerate = useCallback((edit?: { messageId: string; text: string }) => {
     if (memoryOperationRef.current) {
       setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuat ulang respons.");
       return;
@@ -1294,7 +1294,7 @@ export default function App() {
     const provider = settings.ai.provider;
     const current = messagesRef.current;
     const last = current[current.length - 1];
-    if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
+    if ((!edit && (!last || last.role !== "assistant")) || (edit && (!edit.text.trim() || !current.some((message) => message.id === edit.messageId && message.role === "user"))) || genState === "generating" || chatStartPendingRef.current) return;
 
     if (provider === "local") {
       if (runtimeOperationRef.current) {
@@ -1310,15 +1310,20 @@ export default function App() {
       return;
     }
 
-    const userMsg = [...current].reverse().find((message) => message.role === "user");
+    const currentForReplay = edit
+      ? current.map((message) => message.id === edit.messageId ? { ...message, text: edit.text.trim() } : message)
+      : current;
+    const userMsg = edit
+      ? currentForReplay.find((message) => message.id === edit.messageId && message.role === "user")
+      : [...currentForReplay].reverse().find((message) => message.role === "user");
     if (!userMsg) return;
-    const idx = current.lastIndexOf(userMsg);
-    const messagesToSend = current.slice(0, idx + 1);
+    const idx = currentForReplay.findIndex((message) => message.id === userMsg.id);
+    const messagesToSend = currentForReplay.slice(0, idx + 1);
     const skillIds = detectSkills(userMsg.text, Boolean(userMsg.attachments?.length), settings.ai.thinking);
     setActiveSkillIds(skillIds);
     setChatError(null);
     lastActivityRef.current = Date.now();
-    setMessages((messages) => messages.slice(0, idx + 1));
+    setMessages(messagesToSend);
     setGenState("generating");
 
     const msgId = uid();
