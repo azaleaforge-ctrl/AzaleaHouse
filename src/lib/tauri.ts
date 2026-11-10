@@ -699,3 +699,15 @@ export async function invokeInstallUpdate(): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("install_update");
 }
+
+
+export async function invokeRouterVisionDescribe(args: {
+  model: string;
+  prompt: string;
+  images: string[];
+  imageMimeTypes: string[];
+}): Promise<string> {
+  if (!isTauri()) throw new Error("Vision helper hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<string>("router_vision_describe", { payload: args });
+}
