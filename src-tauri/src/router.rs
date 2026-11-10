@@ -282,7 +282,7 @@ fn parse_completion_chunk(value: &serde_json::Value) -> Result<ParsedCompletionC
 fn build_chat_completion_body(
     model: &str,
     messages: Vec<serde_json::Value>,
-    options: &RouterOptions,
+    _options: &RouterOptions,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": model,
