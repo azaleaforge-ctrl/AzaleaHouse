@@ -39,6 +39,7 @@ pub fn run() {
             router::list_9router_models,
             router::disconnect_9router,
             router::router_chat_start,
+            router::web_search,
             // Phase 4: Local storage & .AzaleaMemory
             fs::memory_path,
             fs::ensure_memory_dir,
