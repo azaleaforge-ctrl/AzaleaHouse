@@ -65,6 +65,8 @@ export interface Message {
   images?: string[];
   /** Metadata/teks lampiran yang ikut tersimpan bersama percakapan. */
   attachments?: MessageAttachment[];
+  /** Web results attached to the answer for a clickable source popover. */
+  sources?: Array<{ title: string; url: string; snippet: string }>;
 }
 
 /** Status generasi respons model lokal. */
