@@ -118,7 +118,13 @@ export function ImageStudio({
             <p className="row-desc">Tool image generation melalui endpoint OpenAI-compatible 9Router.</p>
           </div>
         </header>
+        <div className="studio-mode-tabs" role="tablist" aria-label="Jenis generasi">
+          <button type="button" role="tab" aria-selected={mode === "image"} className={mode === "image" ? "studio-mode-tab active" : "studio-mode-tab"} onClick={() => setMode("image")}>Image generation</button>
+          <button type="button" role="tab" aria-selected={mode === "video"} className={mode === "video" ? "studio-mode-tab active" : "studio-mode-tab"} onClick={() => setMode("video")}>Motion / video</button>
+        </div>
 
+        {mode === "image" ? (
+          <>
         <section className="settings-section">
           <div className="image-studio-connection">
             <span className={"status-dot " + (connected ? "status-dot--ready" : "status-dot--error")} />
@@ -173,7 +179,41 @@ export function ImageStudio({
             <img className="generated-image" src={"data:" + image.mimeType + ";base64," + image.base64} alt="Gambar hasil generasi AzaleaHouse" />
             <a className="btn" href={"data:" + image.mimeType + ";base64," + image.base64} download="AzaleaHouse-generated-image.png">Simpan gambar</a>
           </section>
+        ) : (
+          <section className="settings-section video-studio">
+            <div className="image-studio-connection">
+              <span className={"status-dot " + (connected ? "status-dot--ready" : "status-dot--error")} />
+              <strong>{connected ? "9Router terhubung" : "9Router belum terhubung"}</strong>
+              {!connected ? <button type="button" className="btn btn--primary" onClick={onOpenConnect}>Connect 9Router</button> : null}
+              <button type="button" className="btn btn--ghost" disabled={!connected || videoModelsBusy} onClick={() => void refreshVideoModels()}>{videoModelsBusy ? "Memuat…" : "Refresh video models"}</button>
+            </div>
+            <label className="command-label" htmlFor="video-model">Model video</label>
+            <select id="video-model" className="select select--full" value={videoModel} onChange={(event) => setVideoModel(event.target.value)} disabled={!connected || videoModels.length === 0 || videoModelsBusy}>
+              {videoModels.length === 0 ? <option value="">{videoModelsBusy ? "Memuat katalog video…" : "Tidak ada model video yang tersedia"}</option> : null}
+              {videoModels.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
+            </select>
+            <p className="row-desc">9Router membuat video secara asynchronous dan memeriksa status sampai hasil siap. Model, akses, dan kuota bergantung pada provider yang terhubung.</p>
+            <label className="command-label" htmlFor="video-prompt">Deskripsi motion / video</label>
+            <textarea id="video-prompt" className="image-prompt" rows={5} value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} maxLength={4000} placeholder="Contoh: Kamera bergerak perlahan mendekati rumah di tepi pantai, ombak bergerak dan awan melintas…" />
+            <div className="video-studio-options">
+              <label><span>Durasi</span><select className="select select--full" value={videoDuration} onChange={(event) => setVideoDuration(Number(event.target.value))}><option value={5}>5 detik</option><option value={8}>8 detik</option><option value={10}>10 detik</option><option value={12}>12 detik</option><option value={15}>15 detik</option></select></label>
+              <label><span>Rasio</span><select className="select select--full" value={videoAspectRatio} onChange={(event) => setVideoAspectRatio(event.target.value as typeof videoAspectRatio)}>{(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"] as const).map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></label>
+              <label><span>Resolusi</span><select className="select select--full" value={videoResolution} onChange={(event) => setVideoResolution(event.target.value as typeof videoResolution)}><option value="480p">480p</option><option value="720p">720p</option><option value="1080p">1080p</option></select></label>
+            </div>
+            {videoError ? <p className="command-error" role="alert">{videoError}</p> : null}
+            <button type="button" className="btn btn--primary" disabled={!connected || !videoModel || !videoPrompt.trim() || videoBusy} onClick={() => void generateVideo()}>{videoBusy ? "Membuat video dan menunggu hasil…" : "Generate motion video"}</button>
+            {videoBusy ? <p className="row-desc" role="status">Tugas masih diproses. Jangan kirim ulang sampai permintaan ini selesai agar tidak membuat tugas berbayar ganda.</p> : null}
+          </section>
+        )}
+        {mode === "video" && videoResult ? (
+          <section className="settings-section">
+            <h2 className="panel-title">Hasil motion video</h2>
+            <video className="generated-video" controls playsInline src={videoResult.url} />
+            <p className="row-desc">{videoResult.model} · {videoResult.duration ?? videoDuration} detik</p>
+            <a className="btn" href={videoResult.url} target="_blank" rel="noopener noreferrer">Buka / unduh video MP4</a>
+          </section>
         ) : null}
+          </>
       </div>
     </div>
   );
