@@ -61,6 +61,7 @@ pub fn run() {
             fs::load_attachment_base64,
             // Phase 6: Local document engine
             document::create_document_docx,
+            document::create_document_pptx,
             document::open_documents_folder,
             // Legacy arbitrary-path reader/encoder commands remain unregistered.
 
