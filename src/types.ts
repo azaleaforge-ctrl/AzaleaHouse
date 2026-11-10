@@ -77,6 +77,7 @@ export interface Message {
   sources?: Array<{ title: string; url: string; snippet: string }>;
   usage?: ProviderTokenUsage;
   startedAtMs?: number;
+  inferenceStartedAtMs?: number;
   durationMs?: number;
   /** Neutral, user-facing milestones; never contains raw model reasoning. */
   processSteps?: string[];
