@@ -775,7 +775,7 @@ mod tests {
             // A delayed first response byte catches the former zero-second total timeout.
             sleep(Duration::from_millis(350)).await;
             socket
-                .write_all(b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nOK")
+                .write_all(b"HTTP/1.1 200 OK\r\\nContent-Length: 2\r\\nConnection: close\r\\n\r\\nOK")
                 .await
                 .expect("write delayed response");
         });
