@@ -138,25 +138,27 @@ export function SettingsPanel({
             </select>
           )}
         />
-        <FieldRow
-          label="Batas output"
-          desc="Batas token keluaran per respons. Provider dapat menerapkan batas yang lebih rendah."
-          stacked
-          control={
-            <select
-              className="select select--full"
-              value={settings.maxOutputTokens}
-              onChange={(event) => onChange({ maxOutputTokens: Number(event.target.value) })}
-              aria-label="Batas output"
-            >
-              {outputOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option.toLocaleString("id-ID")} token
-                </option>
-              ))}
-            </select>
-          }
-        />
+        {settings.provider === "local" ? (
+          <FieldRow
+            label="Batas output"
+            desc="Batas token keluaran hanya berlaku untuk model Ollama lokal. Model provider memakai kebijakan output dari provider/model."
+            stacked
+            control={
+              <select
+                className="select select--full"
+                value={settings.maxOutputTokens}
+                onChange={(event) => onChange({ maxOutputTokens: Number(event.target.value) })}
+                aria-label="Batas output lokal"
+              >
+                {outputOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option.toLocaleString("id-ID")} token
+                  </option>
+                ))}
+              </select>
+            }
+          />
+        ) : null}
         <FieldRow
           label="Temperature"
           stacked
