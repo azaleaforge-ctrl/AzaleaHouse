@@ -1155,7 +1155,7 @@ export default function App() {
             : message));
           try {
             const results = await invokeWebSearch(t);
-            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results } : message));
+            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results, processSteps: appendProcessStep(message.processSteps, results.length ? `Menemukan ${results.length} halaman web` : "Pencarian tidak menemukan halaman yang sesuai") } : message));
             const sourceContext = results.length
               ? [
                   "HASIL WEB SEARCH (gunakan tanggal yang tercantum, jangan mengarang tanggal):",
@@ -1401,7 +1401,7 @@ export default function App() {
             : message));
           try {
             const results = await invokeWebSearch(userMsg.text);
-            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results } : message));
+            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results, processSteps: appendProcessStep(message.processSteps, results.length ? `Menemukan ${results.length} halaman web` : "Pencarian tidak menemukan halaman yang sesuai") } : message));
             const sourceContext = results.length
               ? [
                   "HASIL WEB SEARCH:",
