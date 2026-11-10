@@ -255,7 +255,7 @@ export function SettingsScreen({
               </select>
             }
           />
-          <FieldRow
+          {ai.provider === "local" ? (          <FieldRow
             label="Context window"
             control={
               <select
@@ -271,7 +271,7 @@ export function SettingsScreen({
                 ))}
               </select>
             }
-          />
+          />) : null}
           {ai.provider === "local" ? (
             <FieldRow
               label="Batas output"
@@ -293,7 +293,7 @@ export function SettingsScreen({
               }
             />
           ) : null}
-          <FieldRow
+          {ai.provider === "local" ? (          <FieldRow
             label="Temperature"
             stacked
             control={
@@ -309,9 +309,10 @@ export function SettingsScreen({
                 <span className="field-value">{decimalID(ai.temperature)}</span>
               </div>
             }
-          />
+          />) : null}
         </section>
 
+        {ai.provider === "local" ? (
         <section className="settings-section" aria-labelledby="sec-advanced">
           <h2 className="panel-title" id="sec-advanced">Parameter lanjutan</h2>
           <FieldRow
@@ -407,6 +408,7 @@ export function SettingsScreen({
             }
           />
         </section>
+        ) : null}
 
         <section className="settings-section" aria-labelledby="sec-update">
           <h2 className="panel-title" id="sec-update">
