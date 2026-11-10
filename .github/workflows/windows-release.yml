@@ -168,16 +168,7 @@ jobs:
             throw "Release metadata returned an unexpected tag: $($release.tag_name)"
           }
 
-          $pattern = '^AzaleaHouse_' + [regex]::Escape($env:APP_VERSION) + '_.+\.exe        if: github.ref != 'refs/heads/main' || steps.release_check.outputs.publish != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: AzaleaHouse-Installer-v${{ steps.app_version.outputs.version }}-Windows-x64
-          path: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 14
-
+          $pattern = '^AzaleaHouse_' + [regex]::Escape($env:APP_VERSION) + '_.+\.exe$'
           $assets = @($release.assets | Where-Object { $_.name -match $pattern -and $_.size -gt 0 })
           if ($assets.Count -ne 1) {
             throw "Expected exactly one non-empty Windows installer for $tag; found $($assets.Count)."
