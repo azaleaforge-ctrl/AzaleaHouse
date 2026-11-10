@@ -150,6 +150,59 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Smoke test published release for in-app updater
+        if: github.ref == 'refs/heads/main' && steps.release_check.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_VERSION: ${{ steps.app_version.outputs.version }}
+        run: |
+          $tag = "v$env:APP_VERSION"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $release = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" -Headers $headers
+          if ($release.tag_name -ne $tag) {
+            throw "Release metadata returned an unexpected tag: $($release.tag_name)"
+          }
+
+          $pattern = '^AzaleaHouse_' + [regex]::Escape($env:APP_VERSION) + '_.+\.exe        if: github.ref != 'refs/heads/main' || steps.release_check.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AzaleaHouse-Installer-v${{ steps.app_version.outputs.version }}-Windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+          $assets = @($release.assets | Where-Object { $_.name -match $pattern -and $_.size -gt 0 })
+          if ($assets.Count -ne 1) {
+            throw "Expected exactly one non-empty Windows installer for $tag; found $($assets.Count)."
+          }
+
+          # Exercise the public release-download URL used by Version Center.
+          # Download to the runner temp folder only; never execute the installer.
+          $installer = $assets[0]
+          $downloadPath = Join-Path $env:RUNNER_TEMP $installer.name
+          Invoke-WebRequest -Uri $installer.browser_download_url -OutFile $downloadPath -MaximumRedirection 10 -TimeoutSec 180
+          $downloaded = Get-Item -LiteralPath $downloadPath
+          if ($downloaded.Length -ne [long]$installer.size) {
+            throw "Installer download size mismatch: expected $($installer.size), got $($downloaded.Length)."
+          }
+          $stream = [System.IO.File]::OpenRead($downloadPath)
+          try {
+            $header = New-Object byte[] 2
+            if ($stream.Read($header, 0, 2) -ne 2 -or $header[0] -ne 0x4D -or $header[1] -ne 0x5A) {
+              throw "Published asset does not have a Windows PE MZ header."
+            }
+          } finally {
+            $stream.Dispose()
+          }
+          Remove-Item -LiteralPath $downloadPath -Force
+          Write-Host "In-app updater smoke test passed: $tag release metadata, download redirect, size, and PE header validated."
       - name: Upload build artifact for branch testing
         if: github.ref != 'refs/heads/main' || steps.release_check.outputs.publish != 'true'
         uses: actions/upload-artifact@v4
