@@ -678,6 +678,30 @@ export async function invokeList9RouterImageModels(): Promise<RouterModel[]> {
   return await invoke<RouterModel[]>("list_9router_image_models");
 }
 
+export async function invokeList9RouterVideoModels(): Promise<RouterModel[]> {
+  if (!isTauri()) throw new Error("Katalog model video 9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<RouterModel[]>("list_9router_video_models");
+}
+
+export interface GeneratedVideo {
+  url: string;
+  model: string;
+  duration: number | null;
+}
+
+export async function invokeRouterGenerateVideo(args: {
+  model: string;
+  prompt: string;
+  duration: number;
+  aspectRatio: "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3";
+  resolution: "480p" | "720p" | "1080p";
+}): Promise<GeneratedVideo> {
+  if (!isTauri()) throw new Error("Video generation hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<GeneratedVideo>("router_generate_video", { payload: args });
+}
+
 export async function invokeDisconnect9Router(): Promise<void> {
   if (!isTauri()) throw new Error("9Router hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");
