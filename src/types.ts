@@ -78,6 +78,9 @@ export interface Message {
   usage?: ProviderTokenUsage;
   startedAtMs?: number;
   durationMs?: number;
+  /** Neutral, user-facing milestones; never contains raw model reasoning. */
+  processSteps?: string[];
+  thoughtDurationMs?: number;
 }
 
 /** Status generasi respons model lokal. */
