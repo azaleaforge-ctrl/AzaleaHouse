@@ -981,6 +981,35 @@ mod chat_stream_tests {
     }
 
     #[test]
+    fn removes_only_the_optional_image_parameter_rejected_by_gateway() {
+        let mut body = json!({
+            "model": "cf/model",
+            "prompt": "draw",
+            "size": "1024x1024",
+            "n": 1,
+            "response_format": "b64_json"
+        });
+        assert!(super::remove_rejected_image_parameter(&mut body, "unsupported parameter size"));
+        assert!(body.get("size").is_none());
+        assert!(body.get("response_format").is_some());
+        assert!(super::remove_rejected_image_parameter(&mut body, "unknown field response_format"));
+        assert!(body.get("response_format").is_none());
+    }
+
+    #[test]
+    fn uses_prompt_only_for_known_gemini_image_adapters() {
+        assert!(super::image_model_uses_prompt_only("gemini/gemini-3-pro-image-preview"));
+        assert!(super::image_model_uses_prompt_only("nanobanana/pro"));
+        assert!(!super::image_model_uses_prompt_only("openai/dall-e-3"));
+    }
+
+    #[test]
+    fn skips_size_for_cloudflare_flux_1_schnell_compatibility_bug() {
+        assert!(super::image_model_omits_size("cf/@cf/black-forest-labs/flux-1-schnell"));
+        assert!(!super::image_model_omits_size("cf/@cf/black-forest-labs/flux-2-dev"));
+    }
+
+    #[test]
     fn recognizes_codex_image_model_ids() {
         assert!(super::is_codex_image_model("cx/gpt-image-2"));
         assert!(super::is_codex_image_model("codex/gpt-5.4-image"));
@@ -1344,6 +1373,48 @@ fn sniff_image_mime(bytes: &[u8], fallback: &'static str) -> &'static str {
     else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" { "image/webp" }
     else { fallback }
 }
+fn remove_rejected_image_parameter(body: &mut serde_json::Value, detail: &str) -> bool {
+    let lower = detail.to_ascii_lowercase();
+    let object = match body.as_object_mut() {
+        Some(object) => object,
+        None => return false,
+    };
+    let candidates = [
+        ("response_format", ["response_format", "response format"].as_slice()),
+        ("size", ["size", "width", "height", "aspect_ratio", "aspect ratio"].as_slice()),
+        ("n", ["num_images", "n"].as_slice()),
+        ("output_format", ["output_format", "output format"].as_slice()),
+    ];
+    for (field, aliases) in candidates {
+        let mentioned = aliases.iter().any(|alias| lower.contains(alias));
+        if mentioned && object.remove(field).is_some() {
+            return true;
+        }
+    }
+    // Gateways often say only "unknown field" without echoing the name.
+    // Strip optional fields one at a time; stop as soon as the provider accepts
+    // the request, and never retry a request with no optional fields left.
+    if lower.contains("unknown field") || lower.contains("unsupported parameter") || lower.contains("additional properties") {
+        for field in ["response_format", "size", "n", "output_format"] {
+            if object.remove(field).is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn image_model_uses_prompt_only(model: &str) -> bool {
+    let id = model.to_ascii_lowercase();
+    id.contains("nano-banana")
+        || (id.contains("gemini") && id.contains("image"))
+}
+
+fn image_model_omits_size(model: &str) -> bool {
+    let id = model.to_ascii_lowercase();
+    id == "cf/@cf/black-forest-labs/flux-1-schnell"
+}
+
 fn is_codex_image_model(model: &str) -> bool {
     let id = model.to_ascii_lowercase();
     id.starts_with("cx/")
@@ -1446,42 +1517,48 @@ pub async fn router_generate_image(
 
     let client = http_client(Duration::from_secs(10 * 60))?;
     let codex_model = is_codex_image_model(&payload.model);
+    let prompt_only = image_model_uses_prompt_only(&payload.model);
     let mut request_body = serde_json::json!({
         "model": payload.model,
-        "prompt": prompt,
-        "size": size,
-        "n": 1,
-        "response_format": "b64_json"
+        "prompt": prompt
     });
-    if codex_model {
-        // The 9Router image route normalizes the upstream Codex Responses/SSE
-        // result to OpenAI Images JSON. Keep the public request non-streaming;
-        // retain the SSE parser below for gateway versions that expose raw events.
-        request_body["output_format"] = serde_json::json!("png");
-    }
-    let mut response = client
-        .post(format!("{ROUTER_BASE}/images/generations"))
-        .bearer_auth(&key)
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|error| format!("Permintaan image generation gagal: {error}"))?;
-    if response.status() == reqwest::StatusCode::BAD_REQUEST {
-        let detail = response.text().await.unwrap_or_default();
-        let lower = detail.to_ascii_lowercase();
-        if lower.contains("response_format") || lower.contains("unknown field") || lower.contains("unsupported parameter") {
-            request_body.as_object_mut().map(|body| body.remove("response_format"));
-            response = client
-                .post(format!("{ROUTER_BASE}/images/generations"))
-                .bearer_auth(&key)
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|error| format!("Percobaan kedua image generation gagal: {error}"))?;
-        } else {
-            return Err(format!("Endpoint image generation 9Router menolak permintaan (HTTP 400): {}", detail.chars().take(1200).collect::<String>()));
+    if !prompt_only {
+        request_body["n"] = serde_json::json!(1);
+        request_body["response_format"] = serde_json::json!("b64_json");
+        if !image_model_omits_size(&payload.model) {
+            request_body["size"] = serde_json::json!(size);
         }
     }
+    if codex_model {
+        // The 9Router image route normalizes the upstream Codex Responses/SSE
+        // result to OpenAI Images JSON. Keep the public request non-streaming.
+        request_body["output_format"] = serde_json::json!("png");
+    }
+
+    // A 400 from 9Router validation is not billed. Retry only when its error
+    // identifies an unsupported optional field; never retry 429/5xx or other
+    // errors because they may represent an upstream job already created.
+    let mut response = None;
+    let mut last_validation_error = String::new();
+    for attempt in 0..5 {
+        let result = client
+            .post(format!("{ROUTER_BASE}/images/generations"))
+            .bearer_auth(&key)
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|error| format!("Permintaan image generation gagal: {error}"))?;
+        if result.status() != reqwest::StatusCode::BAD_REQUEST {
+            response = Some(result);
+            break;
+        }
+        let detail = result.text().await.unwrap_or_default();
+        last_validation_error = detail.chars().take(1200).collect::<String>();
+        if attempt == 4 || !remove_rejected_image_parameter(&mut request_body, &last_validation_error) {
+            return Err(format!("Endpoint image generation 9Router menolak permintaan (HTTP 400): {last_validation_error}"));
+        }
+    }
+    let response = response.ok_or_else(|| format!("Image generation tidak bisa dimulai: {last_validation_error}"))?;
 
     let status = response.status();
     if !status.is_success() {
