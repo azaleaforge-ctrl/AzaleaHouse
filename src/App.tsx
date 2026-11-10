@@ -47,7 +47,6 @@ import {
   invokeLoadAttachmentBase64,
   listenChatEvents,
   invokeConnect9Router,
-  invokeList9RouterModels,
   invokeDisconnect9Router,
   invokeRouterChatStart,
   invokeWebSearch,
