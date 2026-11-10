@@ -13,7 +13,8 @@ use tokio::sync::{oneshot, Mutex};
 const ROUTER_BASE: &str = "http://localhost:20128/v1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+// Long-running provider reasoning and generation must not be cut off by a short idle deadline.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub struct RouterCredentials(pub Arc<Mutex<Option<String>>>);
 
@@ -433,8 +434,12 @@ async fn router_worker(
             let _ = process_sse_line(&app, &id, &payload.model, &pending, &mut has_content)?;
         }
 
-        if !has_content && !cancelled {
-            return Err("Stream 9Router berakhir tanpa mengirim teks jawaban. Model mungkin hanya mengirim status reasoning, atau gateway mengembalikan format stream yang tidak kompatibel.".to_owned());
+        if !cancelled && !finished {
+            return Err(if has_content {
+                "Stream 9Router terputus sebelum model mengirim penanda selesai (finish_reason/[DONE]). Jawaban parsial dipertahankan, tetapi tidak ditandai selesai. Coba lanjutkan atau ulangi permintaan.".to_owned()
+            } else {
+                "Stream 9Router berakhir tanpa teks dan tanpa penanda selesai. Model mungkin hanya mengirim status reasoning, atau gateway mengembalikan format stream yang tidak kompatibel.".to_owned()
+            });
         }
         Ok::<(), String>(())
     }.await;
@@ -648,6 +653,15 @@ mod chat_stream_tests {
         })).expect("valid reasoning chunk");
         assert!(parsed.has_thinking);
         assert_eq!(parsed.content, None);
+    }
+
+    #[test]
+    fn does_not_treat_a_partial_stream_as_finished() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [{"delta": {"content": "Jawaban terpotong"}, "finish_reason": null}]
+        })).expect("valid partial chunk");
+        assert!(parsed.content.is_some());
+        assert!(!parsed.finished);
     }
 
     #[test]
