@@ -1599,6 +1599,17 @@ export default function App() {
   const activeModelOptions = settings.ai.provider === "9router"
     ? routerModels.map((item) => ({ id: item.id, name: item.name || item.id }))
     : localModels.map((item) => ({ id: item.id, name: item.name }));
+  const sessionUsage = messages.reduce((sum, message) => {
+    const usage = message.role === "assistant" ? message.usage : undefined;
+    if (!usage) return sum;
+    return {
+      input_tokens: sum.input_tokens + usage.input_tokens,
+      output_tokens: sum.output_tokens + usage.output_tokens,
+      total_tokens: sum.total_tokens + usage.total_tokens,
+      cache_read_tokens: sum.cache_read_tokens + usage.cache_read_tokens,
+      cache_creation_tokens: sum.cache_creation_tokens + usage.cache_creation_tokens,
+    };
+  }, { input_tokens: 0, output_tokens: 0, total_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 });
   const activeRuntimeStatus: RuntimeStatus = settings.ai.provider === "9router"
     ? (routerConnected ? "ready" : "runtime_unavailable")
     : runtimeStatus;
@@ -1930,6 +1941,7 @@ export default function App() {
       {view === "chat" && panelOpen ? (
         <SettingsPanel
           settings={settings.ai}
+          usage={sessionUsage}
           localModels={localModels}
           routerModels={routerModels}
           routerConnected={routerConnected}
