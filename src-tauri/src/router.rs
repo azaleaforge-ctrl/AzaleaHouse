@@ -1001,6 +1001,7 @@ mod chat_stream_tests {
     fn recognizes_codex_image_model_ids() {
         assert!(super::is_codex_image_model("cx/gpt-image-2"));
         assert!(super::is_codex_image_model("codex/gpt-5.4-image"));
+        assert!(!super::is_codex_image_model("openai/gpt-image-1"));
         assert!(!super::is_codex_image_model("openai/dall-e-3"));
     }
 
@@ -1365,7 +1366,6 @@ fn is_codex_image_model(model: &str) -> bool {
     id.starts_with("cx/")
         || id.contains("codex")
         || id.contains("gpt-5.4-image")
-        || id.contains("gpt-image")
 }
 
 fn codex_image_result(value: &serde_json::Value) -> Option<(String, Option<String>)> {
