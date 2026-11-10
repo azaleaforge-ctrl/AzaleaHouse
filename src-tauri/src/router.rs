@@ -167,6 +167,177 @@ pub async fn list_9router_image_models(
     fetch_image_models_with_key(&key).await
 }
 
+async fn fetch_video_models_with_key(key: &str) -> Result<Vec<RouterModel>, String> {
+    let response = http_client(REQUEST_TIMEOUT)?
+        .get(format!("{ROUTER_BASE}/models/video"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|error| format!("Katalog model video 9Router gagal dihubungi: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Katalog model video 9Router mengembalikan HTTP {status}: {}", detail.chars().take(900).collect::<String>()));
+    }
+    let payload: ModelList = response.json().await
+        .map_err(|error| format!("Katalog model video 9Router tidak valid: {error}"))?;
+    let mut models = payload.data;
+    models.retain(|model| !model.id.trim().is_empty());
+    models.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
+    Ok(models)
+}
+
+#[tauri::command]
+pub async fn list_9router_video_models(
+    credentials: State<'_, RouterCredentials>,
+) -> Result<Vec<RouterModel>, String> {
+    let key = credentials.0.lock().await.clone()
+        .ok_or_else(|| "9Router belum tersambung. Gunakan /connect untuk memasukkan API key.".to_owned())?;
+    fetch_video_models_with_key(&key).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterVideoRequest {
+    pub model: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub duration: Option<u8>,
+    #[serde(default)]
+    pub aspect_ratio: Option<String>,
+    #[serde(default)]
+    pub resolution: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedVideo {
+    pub url: String,
+    pub model: String,
+    pub duration: Option<u8>,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn router_generate_video(
+    app: tauri::AppHandle,
+    credentials: State<'_, RouterCredentials>,
+    payload: RouterVideoRequest,
+) -> Result<GeneratedVideo, String> {
+    let key = credentials.0.lock().await.clone()
+        .ok_or_else(|| "9Router belum tersambung. Hubungkan provider terlebih dahulu.".to_owned())?;
+    let model = payload.model.trim();
+    let prompt = payload.prompt.trim();
+    if model.is_empty() || model.len() > 512 || model.chars().any(char::is_control) {
+        return Err("Model video tidak valid.".to_owned());
+    }
+    if prompt.is_empty() || prompt.len() > 4000 || prompt.chars().any(char::is_control) {
+        return Err("Prompt video kosong, terlalu panjang, atau mengandung karakter kontrol (maksimum 4.000 karakter).".to_owned());
+    }
+    let duration = payload.duration.unwrap_or(8);
+    if !(1..=15).contains(&duration) {
+        return Err("Durasi video harus antara 1 sampai 15 detik.".to_owned());
+    }
+    let aspect_ratio = match payload.aspect_ratio.as_deref().unwrap_or("16:9") {
+        "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3" => payload.aspect_ratio.as_deref().unwrap_or("16:9"),
+        _ => return Err("Aspect ratio video tidak didukung.".to_owned()),
+    };
+    let resolution = match payload.resolution.as_deref().unwrap_or("720p") {
+        "480p" | "720p" | "1080p" => payload.resolution.as_deref().unwrap_or("720p"),
+        _ => return Err("Resolusi video tidak didukung.".to_owned()),
+    };
+
+    let client = http_client(Duration::from_secs(30))?;
+    let response = client
+        .post(format!("{ROUTER_BASE}/videos/generations"))
+        .bearer_auth(&key)
+        .json(&serde_json::json!({
+            "model": model,
+            "prompt": prompt,
+            "duration": duration,
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("Pengiriman tugas video ke 9Router gagal: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("9Router menolak pembuatan video (HTTP {status}): {}", detail.chars().take(1200).collect::<String>()));
+    }
+    let connection_id = response.headers()
+        .get("x-9router-connection-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let created: serde_json::Value = response.json().await
+        .map_err(|error| format!("Respons awal pembuatan video tidak valid: {error}"))?;
+    let request_id = created.get("request_id").and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            if created.get("video").and_then(|video| video.get("url")).is_some() {
+                "9Router mengembalikan video langsung; format ini belum didukung oleh jalur asynchronous.".to_owned()
+            } else {
+                format!("9Router tidak mengembalikan request_id: {}", created)
+            }
+        })?;
+    if request_id.is_empty() || request_id.len() > 256 || !request_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err("ID tugas video dari 9Router tidak valid.".to_owned());
+    }
+
+    let _ = app.emit("azalea:video_progress", serde_json::json!({
+        "requestId": request_id, "status": "pending", "progress": 0
+    }));
+    for attempt in 0..180u32 {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let mut poll = client
+            .get(format!("{ROUTER_BASE}/videos/{request_id}"))
+            .bearer_auth(&key);
+        if let Some(ref connection_id) = connection_id {
+            poll = poll.header("x-connection-id", connection_id);
+        }
+        let poll_response = poll.send().await
+            .map_err(|error| format!("Pemeriksaan status video gagal: {error}"))?;
+        let poll_status = poll_response.status();
+        if !poll_status.is_success() {
+            let detail = poll_response.text().await.unwrap_or_default();
+            return Err(format!("Pemeriksaan status video mengembalikan HTTP {poll_status}: {}", detail.chars().take(900).collect::<String>()));
+        }
+        let state: serde_json::Value = poll_response.json().await
+            .map_err(|error| format!("Status tugas video tidak valid: {error}"))?;
+        let job_status = state.get("status").and_then(|value| value.as_str()).unwrap_or("unknown");
+        let progress = state.get("progress").and_then(|value| value.as_u64()).unwrap_or(((attempt + 1) * 100 / 180) as u64);
+        let _ = app.emit("azalea:video_progress", serde_json::json!({
+            "requestId": request_id, "status": job_status, "progress": progress.min(100)
+        }));
+        match job_status {
+            "failed" | "error" | "cancelled" => {
+                let detail = state.get("error")
+                    .and_then(|error| error.get("message").or(Some(error)))
+                    .map(|value| value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string()))
+                    .unwrap_or_else(|| "Provider gagal membuat video.".to_owned());
+                return Err(format!("Pembuatan video gagal: {detail}"));
+            }
+            "done" | "completed" | "succeeded" => {
+                let url = state.get("video").and_then(|video| video.get("url")).and_then(|value| value.as_str())
+                    .or_else(|| state.get("url").and_then(|value| value.as_str()))
+                    .ok_or_else(|| "Tugas video selesai tetapi URL MP4 tidak tersedia.".to_owned())?;
+                let safe_url = validate_public_image_url(url)?;
+                let actual_duration = state.get("video").and_then(|video| video.get("duration"))
+                    .and_then(|value| value.as_u64()).map(|value| value.min(u8::MAX as u64) as u8);
+                let _ = app.emit("azalea:video_progress", serde_json::json!({
+                    "requestId": request_id, "status": "done", "progress": 100
+                }));
+                return Ok(GeneratedVideo {
+                    url: safe_url.to_string(),
+                    model: model.to_owned(),
+                    duration: actual_duration.or(Some(duration)),
+                });
+            }
+            _ => {}
+        }
+    }
+    Err("Pembuatan video melewati batas tunggu 15 menit. Tugas mungkin masih berjalan di 9Router; periksa dashboard sebelum mengirim ulang agar tidak membuat tagihan ganda.".to_owned())
+}
+
 #[tauri::command]
 pub async fn disconnect_9router(credentials: State<'_, RouterCredentials>) -> Result<(), String> {
     *credentials.0.lock().await = None;
