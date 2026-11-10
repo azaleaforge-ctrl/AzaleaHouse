@@ -140,7 +140,7 @@ export async function listenModelPullProgress(
 /** Payload chat ke Rust. */
 export interface ChatStartPayload {
   model: string;
-  messages: Array<{ role: string; content: string; images?: string[] }>;
+  messages: Array<{ role: string; content: string; images?: string[]; imageMimeTypes?: string[] }>;
   think: boolean;
   runtimePolicy: "auto" | "manual";
   options: {
