@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.2.1";
+export const FALLBACK_VERSION = "0.2.2";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -93,6 +93,14 @@ export const suggestions: Suggestion[] = [
     desc: "Pecah proyek besar menjadi langkah yang jelas.",
     prompt: "Bantu aku menyusun rencana kerja mingguan untuk proyek redesign website.",
   },
+];
+
+export const changelogV022: string[] = [
+  "Perbaikan Version Center: request unduhan tidak lagi memakai batas waktu total nol yang langsung menggagalkan koneksi.",
+  "Koneksi unduhan memiliki batas waktu koneksi dan idle-read yang terpisah agar unduhan installer besar dapat berjalan stabil.",
+  "Pesan kegagalan jaringan diperjelas untuk membantu diagnosis koneksi, DNS, firewall, dan proxy.",
+  "Regression test ditambahkan untuk memastikan HTTP client tetap menunggu respons yang datang terlambat.",
+  "Validasi installer resmi, pemeriksaan ukuran dan header PE, serta pemasangan manual tetap dipertahankan.",
 ];
 
 export const changelogV021: string[] = [
