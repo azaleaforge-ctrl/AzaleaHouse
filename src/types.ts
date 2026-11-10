@@ -15,6 +15,7 @@ export type RuntimeStatus =
 
 export type ProfileId = "quick" | "balanced" | "deep";
 export type ModelId = string;
+export type AiProvider = "local" | "9router";
 
 /** Metadata lampiran yang dapat dipulihkan bersama sesi chat. */
 export interface MessageAttachment {
@@ -77,6 +78,7 @@ export interface AppearanceSettings {
 }
 
 export interface AiSettings {
+  provider: AiProvider;
   thinking: boolean;
   model: ModelId;
   runtimePolicy: RuntimePolicy;
