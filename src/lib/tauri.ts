@@ -758,7 +758,7 @@ export interface GeneratedImage {
 export async function invokeRouterGenerateImage(args: {
   model: string;
   prompt: string;
-  size: "1024x1024" | "1024x1536" | "1536x1024";
+  size: "1024x1024" | "1024x1536" | "1536x1024" | "1792x1024" | "1024x1792" | "512x512";
 }): Promise<GeneratedImage> {
   if (!isTauri()) throw new Error("Image generation hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");
