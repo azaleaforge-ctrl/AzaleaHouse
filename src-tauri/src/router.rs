@@ -339,7 +339,7 @@ async fn router_worker(
     // Provider models own their output budget. No local Ollama token cap is sent.
     let body = build_chat_completion_body(&payload.model, messages, &payload.options);
 
-    let mut cancel = cancel;
+    let cancel = cancel;
     tokio::pin!(cancel);
 
     let result = async {
@@ -605,7 +605,8 @@ mod chat_stream_tests {
         assert_eq!(body.get("stream").and_then(|value| value.as_bool()), Some(true));
         assert!(body.get("max_tokens").is_none());
         assert!(body.get("max_completion_tokens").is_none());
-        assert_eq!(body.get("temperature").and_then(|value| value.as_f64()), Some(0.7));
+        let temperature = body.get("temperature").and_then(|value| value.as_f64()).expect("temperature sent");
+        assert!((temperature - 0.7).abs() < 1e-6);
     }
 
     #[test]
