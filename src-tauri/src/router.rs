@@ -819,7 +819,7 @@ pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, String> {
     let response = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(8))
         .timeout(Duration::from_secs(20))
-        .user_agent("Mozilla/5.0 AzaleaHouse/0.2.3")
+        .user_agent("Mozilla/5.0 AzaleaHouse/0.2.4")
         .build()
         .map_err(|error| format!("Tidak dapat menyiapkan pencarian web: {error}"))?
         .get(url)
