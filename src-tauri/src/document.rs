@@ -536,12 +536,14 @@ fn parse_presentation_slides(title: &str, markdown: &str) -> Vec<PresentationSli
 
     let flush = |slides: &mut Vec<PresentationSlide>, title: &mut String, lines: &mut Vec<String>| {
         if !title.trim().is_empty() || !lines.is_empty() {
+            let slide_number = slides.len() + 1;
+            let slide_title = if title.trim().is_empty() {
+                format!("Slide {slide_number}")
+            } else {
+                title.trim().to_owned()
+            };
             slides.push(PresentationSlide {
-                title: if title.trim().is_empty() {
-                    format!("Slide {}", slides.len() + 1)
-                } else {
-                    title.trim().to_owned()
-                },
+                title: slide_title,
                 lines: std::mem::take(lines),
             });
             *title = format!("Slide {}", slides.len() + 1);
