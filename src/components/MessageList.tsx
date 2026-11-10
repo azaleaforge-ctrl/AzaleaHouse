@@ -41,10 +41,17 @@ function MessageBubble({
         <span className="msg-author">{msg.role === "assistant" ? "AzaleaHouse" : "Anda"}</span>
         <span className="msg-time">{msg.time}</span>
       </div>
-      <div
-        className={"bubble md" + (msg.streaming ? " is-streaming" : "")}
-        dangerouslySetInnerHTML={{ __html: renderMarkdown(displayContent) }}
-      />
+      {msg.text.trim() ? (
+        <div
+          className="bubble md"
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(displayContent) }}
+        />
+      ) : msg.streaming ? (
+        <div className="thinking-bubble" role="status" aria-live="polite">
+          <span className="thinking-dots" aria-hidden="true"><span /><span /><span /></span>
+          <span>{msg.activity || "Sedang menyiapkan jawaban…"}</span>
+        </div>
+      ) : null}
       {msg.attachments && msg.attachments.length > 0 ? (
         <div className="message-attachments" aria-label="Lampiran pesan">
           {msg.attachments.map((attachment, index) => (
