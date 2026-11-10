@@ -13,6 +13,7 @@ function MessageBubble({
   onRegenerate: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const copyTimer = useRef<number | null>(null);
 
   useEffect(
@@ -69,6 +70,11 @@ function MessageBubble({
       ) : null}
       {msg.role === "assistant" ? (
         <div className="msg-actions">
+          {msg.sources?.length ? (
+            <button type="button" className="source-trigger" onClick={() => setSourcesOpen(true)}>
+              <span aria-hidden="true">⌕</span> {msg.sources.length} sumber web
+            </button>
+          ) : null}
           <button
             type="button"
             className="icon-btn icon-btn--sm"
@@ -89,6 +95,28 @@ function MessageBubble({
               <IconRefresh size={14} />
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {sourcesOpen && msg.sources?.length ? (
+        <div className="source-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSourcesOpen(false); }}>
+          <section className="source-dialog" role="dialog" aria-modal="true" aria-label="Sumber pencarian web">
+            <header className="source-dialog-head">
+              <h3>Sumber dari internet</h3>
+              <button type="button" className="icon-btn" onClick={() => setSourcesOpen(false)} aria-label="Tutup sumber">×</button>
+            </header>
+            <div className="source-list">
+              {msg.sources.map((source, index) => (
+                <article className="source-item" key={source.url}>
+                  <span className="source-index">{index + 1}</span>
+                  <div className="source-item-body">
+                    <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || source.url}</a>
+                    <p>{source.snippet}</p>
+                    <span className="source-url">{source.url}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         </div>
       ) : null}
     </article>
