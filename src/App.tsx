@@ -726,11 +726,13 @@ export default function App() {
   }
 
   function finishStream() {
-    if (streamingMsgIdRef.current) {
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === streamingMsgIdRef.current
-            ? { ...msg, streaming: false, activity: undefined, durationMs: msg.startedAtMs ? Math.max(0, Date.now() - msg.startedAtMs) : msg.durationMs }
+    const finishedMessageId = streamingMsgIdRef.current;
+    if (finishedMessageId) {
+      const finishedAt = Date.now();
+      setMessages((current) =>
+        current.map((msg) =>
+          msg.id === finishedMessageId
+            ? { ...msg, streaming: false, activity: undefined, durationMs: msg.startedAtMs ? Math.max(0, finishedAt - msg.startedAtMs) : msg.durationMs }
             : msg,
         ),
       );
