@@ -105,6 +105,7 @@ export const changelogV024: string[] = [
   "Lampiran gambar chat ditampilkan sebagai thumbnail yang dapat dibuka dalam lightbox ukuran penuh.",
   "Image Studio mengambil katalog khusus /v1/models/image 9Router, menerima hasil gambar Base64 atau URL, dan memvalidasi format file.",
   "Image & Motion Studio menambahkan pembuatan video asynchronous melalui 9Router, polling status, progress, dan image-to-video dengan gambar referensi.",
+  "Image generation menambahkan parser SSE Codex image_generation_call, mengabaikan preview parsial, dan mengambil hasil Base64 final.",
   "Mode Ask User dapat menampilkan kartu klarifikasi interaktif ketika model memakai format [[ASK_USER]]...[[/ASK_USER]].",
 ];
 export const changelogV023: string[] = [
