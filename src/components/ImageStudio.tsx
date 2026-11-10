@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { RouterModel } from "../lib/tauri";
 import { invokeList9RouterImageModels, invokeList9RouterVideoModels, invokeRouterGenerateImage, invokeRouterGenerateVideo, type RouterModel, type GeneratedVideo } from "../lib/tauri";
 
 export function ImageStudio({
