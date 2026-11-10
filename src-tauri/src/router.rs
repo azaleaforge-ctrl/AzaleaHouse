@@ -953,6 +953,13 @@ mod chat_stream_tests {
     }
 
     #[test]
+    fn detects_image_mime_from_file_signatures() {
+        assert_eq!(super::sniff_image_mime(b"\x89PNG\r\n\x1a\nimage", "image/jpeg"), "image/png");
+        assert_eq!(super::sniff_image_mime(&[0xFF, 0xD8, 0xFF, 0x00], "image/png"), "image/jpeg");
+        assert_eq!(super::sniff_image_mime(b"GIF89aimage", "image/png"), "image/gif");
+    }
+
+    #[test]
     fn normalizes_common_image_content_types() {
         assert_eq!(super::normalize_image_mime(Some("image/jpeg")), "image/jpeg");
         assert_eq!(super::normalize_image_mime(Some("image/webp; charset=binary")), "image/webp");
@@ -1129,6 +1136,14 @@ fn normalize_image_mime(raw: Option<&str>) -> &'static str {
         _ => "image/png",
     }
 }
+
+fn sniff_image_mime(bytes: &[u8], fallback: &'static str) -> &'static str {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") { "image/png" }
+    else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) { "image/jpeg" }
+    else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") { "image/gif" }
+    else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" { "image/webp" }
+    else { fallback }
+}
 #[tauri::command(rename_all = "camelCase")]
 pub async fn router_generate_image(
     credentials: State<'_, RouterCredentials>,
@@ -1206,7 +1221,8 @@ pub async fn router_generate_image(
         if bytes.is_empty() || bytes.len() > 24 * 1024 * 1024 {
             return Err("Ukuran gambar hasil provider kosong atau melebihi 24 MiB.".to_owned());
         }
-        encoded.to_owned()
+        let detected_mime = sniff_image_mime(&bytes, mime_type);
+        return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else if let Some(url) = first.get("url").and_then(|value| value.as_str()) {
         let safe_url = validate_public_image_url(url)?;
         let image_client = reqwest::Client::builder()
@@ -1241,7 +1257,8 @@ pub async fn router_generate_image(
         if bytes.is_empty() || bytes.len() > 24 * 1024 * 1024 {
             return Err("File gambar provider kosong atau melebihi 24 MiB.".to_owned());
         }
-        return Ok(GeneratedImage { mime_type: remote_mime.to_owned(), base64: STANDARD.encode(bytes) });
+        let detected_mime = sniff_image_mime(&bytes, remote_mime);
+        return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else {
         return Err("Respons provider tidak berisi b64_json atau URL gambar. Periksa apakah model benar-benar mendukung image generation.".to_owned());
     };
