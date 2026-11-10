@@ -615,6 +615,7 @@ export default function App() {
         // A late stream may still deliver its final event after the user cancelled it.
         if (cancelledStreamIdsRef.current.has(e.id)) {
           if (e.done) {
+            setActiveSkillIds([]);
             if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
             else cancelledStreamIdsRef.current.delete(e.id);
             void refreshRuntimeStatus();
@@ -625,6 +626,7 @@ export default function App() {
         if (e.id !== streamIdRef.current) return;
 
         if (e.done) {
+          setActiveSkillIds([]);
           // Start a new idle window from the end of a completed or cancelled stream.
           lastActivityRef.current = Date.now();
           // Finalise: mark message as not streaming
@@ -655,12 +657,14 @@ export default function App() {
       },
       onError: (e) => {
         if (cancelledStreamIdsRef.current.has(e.id)) {
+          setActiveSkillIds([]);
           if (chatStartPendingRef.current) cancelledStreamIdsRef.current.set(e.id, true);
           else cancelledStreamIdsRef.current.delete(e.id);
           void refreshRuntimeStatus();
           return;
         }
         if (!mounted || e.id !== streamIdRef.current) return;
+        setActiveSkillIds([]);
         lastActivityRef.current = Date.now();
         const failedMessageId = streamingMsgIdRef.current;
         if (failedMessageId) {
@@ -1135,8 +1139,20 @@ export default function App() {
 
     streamingMsgIdRef.current = null;
     setGenState("idle");
+    setActiveSkillIds([]);
     setStreamIdRef(null);
   }, []);
+
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || commandDialog !== null || versionOpen) return;
+      if (genState !== "generating" && !chatStartPendingRef.current && streamIdRef.current === null) return;
+      event.preventDefault();
+      stopGeneration();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [commandDialog, versionOpen, genState, stopGeneration]);
 
   // ── Regenerate ──
   const regenerate = useCallback(() => {
