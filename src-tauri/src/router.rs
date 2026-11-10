@@ -1553,6 +1553,9 @@ pub async fn router_generate_image(
         let detected_mime = sniff_image_mime(&bytes, mime_type);
         return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else if let Some(url) = first.get("url").and_then(|value| value.as_str()) {
+        if url.starts_with("data:image/") {
+            return decode_codex_image_result(url, None);
+        }
         let (mut current_url, mut current_host, mut current_address) = resolve_public_image_url(url).await?;
         let mut image_client = public_image_client(&current_host, current_address)?;
         let mut image_response = image_client.get(current_url.clone()).send().await
