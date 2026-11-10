@@ -114,7 +114,7 @@ export function SettingsPanel({
         <FieldRow
           label={settings.provider === "9router" ? "Usage context" : "Context window"}
           desc={settings.provider === "9router"
-            ? "Batas konteks yang disediakan model 9Router."
+            ? "Informasi konteks dari metadata model; AzaleaHouse tidak menerapkan batas context window atau output token tambahan pada provider."
             : "Jumlah token konteks yang dikirim ke Ollama."}
           stacked
           control={settings.provider === "9router" ? (
@@ -159,7 +159,7 @@ export function SettingsPanel({
             }
           />
         ) : null}
-        <FieldRow
+        {settings.provider === "local" ? (        <FieldRow
           label="Temperature"
           stacked
           control={
@@ -175,7 +175,7 @@ export function SettingsPanel({
               <span className="field-value">{decimalID(settings.temperature)}</span>
             </div>
           }
-        />
+        />) : null}
       </section>
 
       <section className="panel-section">
