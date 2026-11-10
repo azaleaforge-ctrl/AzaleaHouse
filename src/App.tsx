@@ -66,7 +66,7 @@ import { DocumentsView } from "./components/DocumentsView";
 import { ImageStudio } from "./components/ImageStudio";
 import { LocalAiView } from "./components/LocalAiView";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
-import { buildSkillsPrompt, detectSkills } from "./data/skills";
+import { buildProfilePrompt, buildSkillsPrompt, detectSkills } from "./data/skills";
 import type { SkillId } from "./data/skills";
 import { CommandDialog } from "./components/CommandDialog";
 import type { CommandDialogMode } from "./components/CommandDialog";
@@ -240,6 +240,7 @@ export default function App() {
 
   // Refs for streaming state — dibaca oleh event listener tanpa closure issues
   const streamIdRef = useRef<string | null>(null);
+  const streamHasContentRef = useRef(false);
   const streamingMsgIdRef = useRef<string | null>(null);
   const chatStartPendingRef = useRef(false);
   const cancelBeforeStartRef = useRef(false);
@@ -635,31 +636,40 @@ export default function App() {
 
         if (e.done) {
           setActiveSkillIds([]);
-          // Start a new idle window from the end of a completed or cancelled stream.
           lastActivityRef.current = Date.now();
-          // Finalise: mark message as not streaming
           setGenState("idle");
           setStreamIdRef(null);
-          finishStream();
+          if (!streamHasContentRef.current && streamingMsgIdRef.current) {
+            const emptyMessageId = streamingMsgIdRef.current;
+            setMessages((current) => current.filter((message) => message.id !== emptyMessageId));
+            streamingMsgIdRef.current = null;
+            setChatError("Model mengakhiri stream tanpa mengirim teks jawaban. Periksa model/provider dan coba lagi.");
+          } else {
+            finishStream();
+          }
+          streamHasContentRef.current = false;
           void refreshRuntimeStatus();
           return;
         }
 
-        // Any streamed output confirms the model has finished its initial load.
+        // Raw reasoning tokens are not displayed. They only drive a temporary
+        // status; the first answer token replaces that status automatically.
         if (e.content || e.thinking) setRuntimeStatus("ready");
+        if (e.content) streamHasContentRef.current = true;
 
-        // Append thinking / content to the streaming message
-        setMessages((m) =>
-          m.map((msg) => {
-            if (msg.id === streamingMsgIdRef.current) {
-              const updated: Message = {
-                ...msg,
-                text: e.content ? msg.text + e.content : msg.text,
-                streaming: true,
-              };
-              return updated;
-            }
-            return msg;
+        setMessages((current) =>
+          current.map((message) => {
+            if (message.id !== streamingMsgIdRef.current) return message;
+            return {
+              ...message,
+              text: e.content ? message.text + e.content : message.text,
+              activity: e.content
+                ? undefined
+                : e.thinking
+                  ? "Sedang menalar dan menyusun jawaban…"
+                  : message.activity,
+              streaming: true,
+            };
           }),
         );
       },
@@ -682,7 +692,7 @@ export default function App() {
               return current.filter((msg) => msg.id !== failedMessageId);
             }
             return current.map((msg) =>
-              msg.id === failedMessageId ? { ...msg, streaming: false } : msg,
+              msg.id === failedMessageId ? { ...msg, streaming: false, activity: undefined } : msg,
             );
           });
         }
@@ -715,7 +725,7 @@ export default function App() {
       setMessages((m) =>
         m.map((msg) =>
           msg.id === streamingMsgIdRef.current
-            ? { ...msg, streaming: false }
+            ? { ...msg, streaming: false, activity: undefined }
             : msg,
         ),
       );
@@ -964,7 +974,12 @@ export default function App() {
     const preset = profileById(p);
     setSettings((s) => ({
       ...s,
-      ai: { ...s.ai, profile: p, thinking: preset.thinking, maxOutputTokens: preset.outputTokens },
+      ai: {
+        ...s.ai,
+        profile: p,
+        thinking: preset.thinking,
+        ...(s.ai.provider === "local" ? { maxOutputTokens: preset.outputTokens } : {}),
+      },
     }));
   }, []);
 
@@ -1058,21 +1073,39 @@ export default function App() {
       setGenState("generating");
       const msgId = uid();
       streamingMsgIdRef.current = msgId;
+      streamHasContentRef.current = false;
       setMessages((current) => [
         ...current,
-        { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true },
+        {
+          id: msgId,
+          role: "assistant",
+          text: "",
+          time: clockNow(),
+          streaming: true,
+          activity: settings.ai.thinking || settings.ai.profile === "deep"
+            ? "Menyiapkan analisis…"
+            : "Menyiapkan jawaban…",
+        },
       ]);
 
       chatStartPendingRef.current = true;
       cancelBeforeStartRef.current = false;
       let modelMessages: ChatStartPayload["messages"];
-      let skillsPrompt = buildSkillsPrompt(skillIds);
+      let skillsPrompt = [buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
+        .filter(Boolean)
+        .join("\n\n");
 
       try {
+        setMessages((current) => current.map((message) => message.id === msgId
+          ? { ...message, activity: "Menyiapkan konteks percakapan…" }
+          : message));
         modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg]);
 
         // Web Research is an explicit network tool, not a claim that the model browsed.
         if (skillIds.includes("web-research")) {
+          setMessages((current) => current.map((message) => message.id === msgId
+            ? { ...message, activity: "Mencari sumber dan informasi pendukung…" }
+            : message));
           try {
             const results = await invokeWebSearch(t);
             const sourceContext = results.length
@@ -1085,6 +1118,9 @@ export default function App() {
                 ].join("\n")
               : "Web search tidak menghasilkan hasil yang dapat digunakan. Jelaskan keterbatasan ini; jangan mengklaim browsing berhasil.";
             skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
+            setMessages((current) => current.map((message) => message.id === msgId
+              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…" }
+              : message));
           } catch (error) {
             skillsPrompt = [
               skillsPrompt,
@@ -1096,6 +1132,7 @@ export default function App() {
         chatStartPendingRef.current = false;
         setMessages((current) => current.filter((message) => message.id !== msgId && message.id !== userMsg.id));
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+        streamHasContentRef.current = false;
         setGenState("idle");
         setActiveSkillIds([]);
         setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
@@ -1118,7 +1155,6 @@ export default function App() {
             think: settings.ai.thinking,
             options: {
               temperature: settings.ai.temperature,
-              num_predict: settings.ai.maxOutputTokens,
               top_p: settings.ai.topP,
             },
             skillsPrompt,
@@ -1172,6 +1208,7 @@ export default function App() {
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         streamIdRef.current = null;
         cancelBeforeStartRef.current = false;
+        streamHasContentRef.current = false;
         setGenState("idle");
         setActiveSkillIds([]);
         lastActivityRef.current = Date.now();
@@ -1214,6 +1251,7 @@ export default function App() {
                   ? `${message.text}\n\nGenerasi dihentikan.`
                   : "Generasi dihentikan.",
                 streaming: false,
+                activity: undefined,
               }
             : message,
         ),
@@ -1275,9 +1313,19 @@ export default function App() {
 
     const msgId = uid();
     streamingMsgIdRef.current = msgId;
+    streamHasContentRef.current = false;
     setMessages((messages) => [
       ...messages,
-      { id: msgId, role: "assistant", text: "", time: clockNow(), streaming: true },
+      {
+        id: msgId,
+        role: "assistant",
+        text: "",
+        time: clockNow(),
+        streaming: true,
+        activity: settings.ai.thinking || settings.ai.profile === "deep"
+          ? "Menyiapkan analisis…"
+          : "Menyiapkan jawaban…",
+      },
     ]);
 
     chatStartPendingRef.current = true;
@@ -1285,8 +1333,13 @@ export default function App() {
     void (async () => {
       try {
         let modelMessages = await prepareModelMessages(messagesToSend);
-        let skillsPrompt = buildSkillsPrompt(skillIds);
+        let skillsPrompt = [buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
+          .filter(Boolean)
+          .join("\n\n");
         if (skillIds.includes("web-research")) {
+          setMessages((current) => current.map((message) => message.id === msgId
+            ? { ...message, activity: "Mencari sumber dan informasi pendukung…" }
+            : message));
           try {
             const results = await invokeWebSearch(userMsg.text);
             const sourceContext = results.length
@@ -1299,6 +1352,9 @@ export default function App() {
                 ].join("\n")
               : "Pencarian web tidak mengembalikan hasil. Jangan mengklaim browsing berhasil.";
             skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
+            setMessages((current) => current.map((message) => message.id === msgId
+              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…" }
+              : message));
           } catch (error) {
             skillsPrompt = [skillsPrompt, "Web search gagal: " + (error instanceof Error ? error.message : String(error))].filter(Boolean).join("\n\n");
           }
@@ -1320,7 +1376,6 @@ export default function App() {
             think: settings.ai.thinking,
             options: {
               temperature: settings.ai.temperature,
-              num_predict: settings.ai.maxOutputTokens,
               top_p: settings.ai.topP,
             },
             skillsPrompt,
@@ -1384,6 +1439,7 @@ export default function App() {
         chatStartPendingRef.current = false;
         cancelBeforeStartRef.current = false;
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
+        streamHasContentRef.current = false;
         setMessages((messages) => messages.filter((message) => message.id !== msgId));
         setGenState("idle");
         setActiveSkillIds([]);
