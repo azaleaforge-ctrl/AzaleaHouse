@@ -65,6 +65,7 @@ pub fn run() {
             // Phase 7: Version Center & Manual Updater
             updater::check_update,
             updater::download_update,
+            updater::install_update,
             updater::cancel_download,
         ])
         .run(tauri::generate_context!())
