@@ -587,3 +587,92 @@ pub async fn router_vision_describe(
     }
     Ok(description)
 }
+
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterImageRequest {
+    pub model: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub size: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedImage {
+    pub mime_type: String,
+    pub base64: String,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn router_generate_image(
+    credentials: State<'_, RouterCredentials>,
+    payload: RouterImageRequest,
+) -> Result<GeneratedImage, String> {
+    let key = credentials.0.lock().await.clone()
+        .ok_or_else(|| "9Router belum tersambung. Gunakan /connect terlebih dahulu.".to_owned())?;
+    if payload.model.trim().is_empty() || payload.model.len() > 512 {
+        return Err("Model image generation tidak valid.".to_owned());
+    }
+    let prompt = payload.prompt.trim();
+    if prompt.is_empty() || prompt.len() > 20_000 || prompt.chars().any(char::is_control) {
+        return Err("Prompt gambar kosong, terlalu panjang, atau mengandung karakter kontrol.".to_owned());
+    }
+    let size = match payload.size.as_deref().unwrap_or("1024x1024") {
+        "1024x1024" => "1024x1024",
+        "1024x1536" => "1024x1536",
+        "1536x1024" => "1536x1024",
+        _ => return Err("Ukuran gambar tidak didukung.".to_owned()),
+    };
+
+    let response = http_client(Duration::from_secs(10 * 60))?
+        .post(format!("{ROUTER_BASE}/images/generations"))
+        .bearer_auth(&key)
+        .json(&serde_json::json!({
+            "model": payload.model,
+            "prompt": prompt,
+            "size": size,
+            "n": 1,
+            "response_format": "b64_json"
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("Permintaan image generation gagal: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Endpoint image generation 9Router menolak model atau permintaan (HTTP {status}): {}",
+            detail.chars().take(1200).collect::<String>()
+        ));
+    }
+
+    let value: serde_json::Value = response.json().await
+        .map_err(|error| format!("Respons image generation tidak valid: {error}"))?;
+    let first = value.get("data")
+        .and_then(|data| data.get(0))
+        .ok_or_else(|| "Endpoint image generation tidak mengembalikan gambar.".to_owned())?;
+    let encoded = first.get("b64_json")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            if first.get("url").is_some() {
+                "9Router mengembalikan URL gambar, bukan Base64. Endpoint hanya menerima hasil Base64 agar gambar tidak diambil dari host eksternal yang belum diverifikasi.".to_owned()
+            } else {
+                "Respons tidak berisi b64_json.".to_owned()
+            }
+        })?;
+    if encoded.is_empty() || encoded.len() > 32 * 1024 * 1024 {
+        return Err("Hasil gambar kosong atau melebihi batas ukuran 32 MiB.".to_owned());
+    }
+    let mime_type = match first.get("mime_type").and_then(|value| value.as_str()) {
+        Some("image/jpeg") => "image/jpeg",
+        Some("image/webp") => "image/webp",
+        _ => "image/png",
+    };
+    Ok(GeneratedImage {
+        mime_type: mime_type.to_owned(),
+        base64: encoded.to_owned(),
+    })
+}
