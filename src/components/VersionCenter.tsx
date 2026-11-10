@@ -14,7 +14,7 @@ const statusChip: Record<UpdateStatus, { label: string; cls: string }> = {
   up_to_date: { label: "Versi terbaru", cls: "tag tag--ok" },
   update_available: { label: "Update tersedia", cls: "tag tag--info" },
   downloading: { label: "Mengunduh…", cls: "tag tag--info" },
-  downloaded: { label: "Unduhan selesai — instalasi terkunci", cls: "tag tag--warn" },
+  downloaded: { label: "Siap dipasang", cls: "tag tag--ok" },
   installing: { label: "Menjalankan installer…", cls: "tag tag--info" },
   offline: { label: "Luring", cls: "tag tag--warn" },
   error: { label: "Gagal", cls: "tag tag--warn" },
