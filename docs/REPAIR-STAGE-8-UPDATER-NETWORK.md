@@ -8,14 +8,11 @@
 
 The download client called `reqwest::ClientBuilder::timeout(Duration::from_secs(0))`. In Reqwest's async client, `timeout` sets a total request deadline; zero is not the documented way to disable it. The intended behavior is no total download deadline, with an idle-read timeout to detect a stalled connection. This explains why both direct GitHub release attempts and the API fallback reported `TimedOut`.
 
-The dependency also sets `default-features = false` and previously omitted Reqwest's `system-proxy` feature, so the updater could ignore Windows system proxy settings in environments that require them.
-
 ## Changes
 
 - Remove the zero-duration total request timeout. Leave the total download duration unlimited, as intended by Repair Stage 7.
 - Keep a 30-second connection-establishment limit and use a 120-second idle-read limit for the streamed installer.
 - Increase the release metadata check timeout to 30 seconds.
-- Explicitly enable Reqwest's `system-proxy` feature while retaining rustls TLS.
 - Replace verbose timeout debug output with a concise Indonesian explanation that identifies connection, DNS, firewall, or proxy checks.
 - Add a regression test that serves a response after a delay, proving that the updater client does not abort at the start of the request.
 
