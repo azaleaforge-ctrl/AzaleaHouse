@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RouterModel } from "../lib/tauri";
-import { invokeList9RouterImageModels, invokeRouterGenerateImage, type RouterModel } from "../lib/tauri";
+import { invokeList9RouterImageModels, invokeList9RouterVideoModels, invokeRouterGenerateImage, invokeRouterGenerateVideo, type RouterModel, type GeneratedVideo } from "../lib/tauri";
 
 export function ImageStudio({
   connected,
@@ -11,7 +11,18 @@ export function ImageStudio({
   initialPrompt: string;
   onOpenConnect: () => void;
 }) {
+  const [mode, setMode] = useState<"image" | "video">("image");
   const [model, setModel] = useState("");
+  const [videoModels, setVideoModels] = useState<RouterModel[]>([]);
+  const [videoModel, setVideoModel] = useState("");
+  const [videoModelsBusy, setVideoModelsBusy] = useState(false);
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoResult, setVideoResult] = useState<GeneratedVideo | null>(null);
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoDuration, setVideoDuration] = useState(8);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<"16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3">("16:9");
+  const [videoResolution, setVideoResolution] = useState<"480p" | "720p" | "1080p">("720p");
   const [models, setModels] = useState<RouterModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -48,6 +59,36 @@ export function ImageStudio({
   useEffect(() => {
     void refreshImageModels();
   }, [connected]);
+
+  const refreshVideoModels = async () => {
+    if (!connected) { setVideoModels([]); setVideoModel(""); return; }
+    setVideoModelsBusy(true);
+    setVideoError(null);
+    try {
+      const available = await invokeList9RouterVideoModels();
+      setVideoModels(available);
+      setVideoModel((current) => available.some((item) => item.id === current) ? current : (available[0]?.id ?? ""));
+    } catch (reason) {
+      setVideoModels([]);
+      setVideoModel("");
+      setVideoError(reason instanceof Error ? reason.message : "Katalog model video tidak dapat dimuat.");
+    } finally { setVideoModelsBusy(false); }
+  };
+
+  useEffect(() => { void refreshVideoModels(); }, [connected]);
+
+  const generateVideo = async () => {
+    if (!connected) { onOpenConnect(); return; }
+    if (!videoModel || !videoPrompt.trim()) return;
+    setVideoBusy(true); setVideoError(null); setVideoResult(null);
+    try {
+      const result = await invokeRouterGenerateVideo({ model: videoModel, prompt: videoPrompt.trim(), duration: videoDuration, aspectRatio: videoAspectRatio, resolution: videoResolution });
+      setVideoResult(result);
+    } catch (reason) {
+      setVideoError(reason instanceof Error ? reason.message : "Video generation gagal.");
+    } finally { setVideoBusy(false); }
+  };
+
 
   const generate = async () => {
     if (!connected) {
