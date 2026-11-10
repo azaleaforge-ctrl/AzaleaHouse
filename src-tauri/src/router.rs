@@ -83,7 +83,7 @@ fn http_client(timeout: Duration) -> Result<reqwest::Client, String> {
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(timeout)
         .no_gzip()
-        .user_agent("AzaleaHouse/0.2.3")
+        .user_agent("AzaleaHouse/0.2.4")
         .build()
         .map_err(|error| format!("Tidak dapat menyiapkan koneksi 9Router: {error}"))
 }
