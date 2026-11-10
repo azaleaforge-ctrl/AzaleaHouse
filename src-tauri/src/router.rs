@@ -1186,19 +1186,36 @@ fn is_public_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-async fn validate_public_image_url(raw: &str) -> Result<Url, String> {
+async fn resolve_public_image_url(raw: &str) -> Result<(Url, String, std::net::SocketAddr), String> {
     let (url, host, port) = parse_public_image_url(raw)?;
-    if host.parse::<std::net::IpAddr>().is_ok() {
-        return Ok(url);
-    }
-    let addresses = tokio::net::lookup_host((host.as_str(), port)).await
-        .map_err(|_| "DNS URL gambar tidak dapat diverifikasi; unduhan dibatalkan.".to_owned())?
-        .map(|address| address.ip())
-        .collect::<Vec<_>>();
-    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(*address)) {
+    let addresses = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        vec![std::net::SocketAddr::new(ip, port)]
+    } else {
+        tokio::net::lookup_host((host.as_str(), port)).await
+            .map_err(|_| "DNS URL gambar tidak dapat diverifikasi; unduhan dibatalkan.".to_owned())?
+            .collect::<Vec<_>>()
+    };
+    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
         return Err("URL gambar mengarah ke alamat jaringan non-publik atau DNS tidak aman.".to_owned());
     }
+    let address = addresses.into_iter().next().ok_or_else(|| "URL gambar tidak memiliki alamat tujuan.".to_owned())?;
+    Ok((url, host, address))
+}
+
+async fn validate_public_image_url(raw: &str) -> Result<Url, String> {
+    let (url, _, _) = resolve_public_image_url(raw).await?;
     Ok(url)
+}
+
+fn public_image_client(host: &str, address: std::net::SocketAddr) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve(host, address)
+        .user_agent("AzaleaHouse/0.2.4")
+        .build()
+        .map_err(|error| format!("Tidak dapat menyiapkan unduhan hasil gambar: {error}"))
 }
 
 async fn read_response_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
@@ -1316,15 +1333,8 @@ pub async fn router_generate_image(
         let detected_mime = sniff_image_mime(&bytes, mime_type);
         return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else if let Some(url) = first.get("url").and_then(|value| value.as_str()) {
-        let safe_url = validate_public_image_url(url).await?;
-        let image_client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(15))
-            .read_timeout(Duration::from_secs(120))
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent("AzaleaHouse/0.2.4")
-            .build()
-            .map_err(|error| format!("Tidak dapat menyiapkan unduhan hasil gambar: {error}"))?;
-        let mut current_url = safe_url;
+        let (mut current_url, mut current_host, mut current_address) = resolve_public_image_url(url).await?;
+        let mut image_client = public_image_client(&current_host, current_address)?;
         let mut image_response = image_client.get(current_url.clone()).send().await
             .map_err(|error| format!("URL hasil gambar tidak dapat diunduh: {error}"))?;
         for _ in 0..5 {
@@ -1332,9 +1342,13 @@ pub async fn router_generate_image(
             let location = image_response.headers().get(reqwest::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
                 .ok_or_else(|| "Server hasil gambar mengirim redirect tanpa lokasi.".to_owned())?;
-            current_url = current_url.join(location)
+            let redirect_url = current_url.join(location)
                 .map_err(|_| "URL redirect hasil gambar tidak valid.".to_owned())?;
-            current_url = validate_public_image_url(current_url.as_str()).await?;
+            let (validated_url, redirect_host, redirect_address) = resolve_public_image_url(redirect_url.as_str()).await?;
+            current_url = validated_url;
+            current_host = redirect_host;
+            current_address = redirect_address;
+            image_client = public_image_client(&current_host, current_address)?;
             image_response = image_client.get(current_url.clone()).send().await
                 .map_err(|error| format!("Redirect hasil gambar gagal diunduh: {error}"))?;
         }
