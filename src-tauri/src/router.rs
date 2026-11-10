@@ -1,6 +1,7 @@
 //! OpenAI-compatible provider bridge for the local 9Router gateway.
 //! API credentials are held only in process memory and are never written to logs or settings.
 use std::collections::HashMap;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -860,6 +861,26 @@ pub struct GeneratedImage {
     pub base64: String,
 }
 
+fn validate_public_image_url(raw: &str) -> Result<Url, String> {
+    let url = Url::parse(raw).map_err(|_| "URL hasil gambar dari provider tidak valid.".to_owned())?;
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return Err("URL gambar harus menggunakan HTTPS tanpa kredensial di URL.".to_owned());
+    }
+    let host = url.host_str().ok_or_else(|| "URL gambar tidak memiliki host.".to_owned())?.to_ascii_lowercase();
+    if host.parse::<std::net::IpAddr>().is_ok() || host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") {
+        return Err("Host URL gambar lokal/private tidak diizinkan.".to_owned());
+    }
+    Ok(url)
+}
+
+fn normalize_image_mime(raw: Option<&str>) -> &'static str {
+    match raw.map(|value| value.split(';').next().unwrap_or("").trim().to_ascii_lowercase()).as_deref() {
+        Some("image/jpeg") => "image/jpeg",
+        Some("image/webp") => "image/webp",
+        Some("image/gif") => "image/gif",
+        _ => "image/png",
+    }
+}
 #[tauri::command(rename_all = "camelCase")]
 pub async fn router_generate_image(
     credentials: State<'_, RouterCredentials>,
@@ -881,19 +902,37 @@ pub async fn router_generate_image(
         _ => return Err("Ukuran gambar tidak didukung.".to_owned()),
     };
 
-    let response = http_client(Duration::from_secs(10 * 60))?
+    let client = http_client(Duration::from_secs(10 * 60))?;
+    let mut request_body = serde_json::json!({
+        "model": payload.model,
+        "prompt": prompt,
+        "size": size,
+        "n": 1,
+        "response_format": "b64_json"
+    });
+    let mut response = client
         .post(format!("{ROUTER_BASE}/images/generations"))
         .bearer_auth(&key)
-        .json(&serde_json::json!({
-            "model": payload.model,
-            "prompt": prompt,
-            "size": size,
-            "n": 1,
-            "response_format": "b64_json"
-        }))
+        .json(&request_body)
         .send()
         .await
         .map_err(|error| format!("Permintaan image generation gagal: {error}"))?;
+    if response.status() == reqwest::StatusCode::BAD_REQUEST {
+        let detail = response.text().await.unwrap_or_default();
+        let lower = detail.to_ascii_lowercase();
+        if lower.contains("response_format") || lower.contains("unknown field") || lower.contains("unsupported parameter") {
+            request_body.as_object_mut().map(|body| body.remove("response_format"));
+            response = client
+                .post(format!("{ROUTER_BASE}/images/generations"))
+                .bearer_auth(&key)
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|error| format!("Percobaan kedua image generation gagal: {error}"))?;
+        } else {
+            return Err(format!("Endpoint image generation 9Router menolak permintaan (HTTP 400): {}", detail.chars().take(1200).collect::<String>()));
+        }
+    }
 
     let status = response.status();
     if !status.is_success() {
@@ -908,26 +947,44 @@ pub async fn router_generate_image(
         .map_err(|error| format!("Respons image generation tidak valid: {error}"))?;
     let first = value.get("data")
         .and_then(|data| data.get(0))
-        .ok_or_else(|| "Endpoint image generation tidak mengembalikan gambar.".to_owned())?;
-    let encoded = first.get("b64_json")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| {
-            if first.get("url").is_some() {
-                "9Router mengembalikan URL gambar, bukan Base64. Endpoint hanya menerima hasil Base64 agar gambar tidak diambil dari host eksternal yang belum diverifikasi.".to_owned()
-            } else {
-                "Respons tidak berisi b64_json.".to_owned()
-            }
-        })?;
-    if encoded.is_empty() || encoded.len() > 32 * 1024 * 1024 {
-        return Err("Hasil gambar kosong atau melebihi batas ukuran 32 MiB.".to_owned());
-    }
-    let mime_type = match first.get("mime_type").and_then(|value| value.as_str()) {
-        Some("image/jpeg") => "image/jpeg",
-        Some("image/webp") => "image/webp",
-        _ => "image/png",
+        .ok_or_else(|| "Endpoint image generation tidak mengembalikan gambar. Pastikan model mendukung /images/generations.".to_owned())?;
+
+    let mime_type = normalize_image_mime(first.get("mime_type").and_then(|value| value.as_str()));
+    let encoded = if let Some(encoded) = first.get("b64_json").and_then(|value| value.as_str()) {
+        if encoded.is_empty() || encoded.len() > 32 * 1024 * 1024 {
+            return Err("Hasil gambar kosong atau melebihi batas ukuran 32 MiB.".to_owned());
+        }
+        let bytes = STANDARD.decode(encoded).map_err(|_| "Hasil Base64 gambar dari provider tidak valid.".to_owned())?;
+        if bytes.is_empty() || bytes.len() > 24 * 1024 * 1024 {
+            return Err("Ukuran gambar hasil provider kosong atau melebihi 24 MiB.".to_owned());
+        }
+        encoded.to_owned()
+    } else if let Some(url) = first.get("url").and_then(|value| value.as_str()) {
+        let safe_url = validate_public_image_url(url)?;
+        let image_client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(Duration::from_secs(120))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent("AzaleaHouse/0.2.4")
+            .build()
+            .map_err(|error| format!("Tidak dapat menyiapkan unduhan hasil gambar: {error}"))?;
+        let image_response = image_client.get(safe_url).send().await
+            .map_err(|error| format!("URL hasil gambar tidak dapat diunduh: {error}"))?;
+        if !image_response.status().is_success() {
+            return Err(format!("Server hasil gambar mengembalikan HTTP {}. Redirect tidak diikuti untuk menjaga keamanan.", image_response.status()));
+        }
+        if image_response.content_length().is_some_and(|length| length > 24 * 1024 * 1024) {
+            return Err("File gambar provider melebihi batas 24 MiB.".to_owned());
+        }
+        let remote_mime = normalize_image_mime(image_response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|value| value.to_str().ok()));
+        let bytes = image_response.bytes().await.map_err(|error| format!("Data gambar gagal dibaca: {error}"))?;
+        if bytes.is_empty() || bytes.len() > 24 * 1024 * 1024 {
+            return Err("File gambar provider kosong atau melebihi 24 MiB.".to_owned());
+        }
+        return Ok(GeneratedImage { mime_type: remote_mime.to_owned(), base64: STANDARD.encode(bytes) });
+    } else {
+        return Err("Respons provider tidak berisi b64_json atau URL gambar. Periksa apakah model benar-benar mendukung image generation.".to_owned());
     };
-    Ok(GeneratedImage {
-        mime_type: mime_type.to_owned(),
-        base64: encoded.to_owned(),
-    })
+
+    Ok(GeneratedImage { mime_type: mime_type.to_owned(), base64: encoded })
 }
