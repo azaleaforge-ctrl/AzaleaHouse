@@ -216,6 +216,8 @@ export interface StoredMessage {
   sources?: Array<{ title: string; url: string; snippet: string }>;
   usage?: ProviderTokenUsage;
   duration_ms?: number;
+  process_steps?: string[];
+  thought_duration_ms?: number;
 }
 
 /** Dapatkan path .AzaleaMemory yang sedang dipakai. */
