@@ -710,6 +710,25 @@ mod chat_stream_tests {
     }
 
     #[test]
+    fn parses_provider_input_output_and_cache_usage() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 340,
+                "total_tokens": 1540,
+                "prompt_tokens_details": { "cached_tokens": 250, "cache_creation_tokens": 80 }
+            }
+        })).expect("valid usage-only final chunk");
+        assert_eq!(parsed.usage, Some(ProviderTokenUsage {
+            input_tokens: 1200,
+            output_tokens: 340,
+            total_tokens: 1540,
+            cache_read_tokens: 250,
+            cache_creation_tokens: 80,
+        }));
+    }
+    #[test]
     fn recognizes_finish_reason_and_provider_errors() {
         let parsed = parse_completion_chunk(&json!({
             "choices": [{"delta": {}, "finish_reason": "stop"}]
