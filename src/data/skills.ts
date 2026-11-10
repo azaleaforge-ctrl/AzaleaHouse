@@ -59,10 +59,10 @@ export function detectSkills(prompt: string, hasAttachments: boolean, thinking: 
     ids.unshift("lazy-dev");
   }
   if (hasAttachments) ids.push("file-analysis");
-  if (/\b(dokumen|laporan|proposal|docx|pdf|ppt|presentasi|slide|cover)\b/.test(value)) {
+  if (/\b(dokumen|buat dokumen|laporan|proposal|docx|pdf|pptx?|word|presentasi|presentation|slide|cover)\b/.test(value)) {
     ids.push("document-engine");
   }
-  if (/\b(terbaru|terkini|hari ini|sekarang|latest|today|current|news|berita|harga|kurs|cuaca|jadwal|regulasi|aturan|202[6-9])\b/.test(value)) {
+  if (/\b(terbaru|terkini|hari ini|sekarang|latest|today|current|news|berita|harga|kurs|cuaca|jadwal|regulasi|aturan|web|internet|search|online|sumber|202[6-9])\b/.test(value)) {
     ids.push("web-research");
   }
   if (thinking) ids.push("reasoning-adapter");
