@@ -1055,7 +1055,13 @@ mod chat_stream_tests {
 
     #[test]
     fn parses_codex_image_sse_and_ignores_intermediate_progress() {
-        let raw = b"event: response.image_generation_call.partial_image\\ndata: {\\"type\\":\\"response.image_generation_call.partial_image\\",\\"partial_image_b64\\":\\"iVBORw0KGgo=\\"}\\n\\nevent: response.output_item.done\\ndata: {\\"type\\":\\"response.output_item.done\\",\\"item\\":{\\"type\\":\\"image_generation_call\\",\\"status\\":\\"generating\\",\\"result\\":\\"iVBORw0KGgo=\\"}}\\n\\n";
+        let raw = br#"event: response.image_generation_call.partial_image
+data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"iVBORw0KGgo="}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"image_generation_call","status":"generating","result":"iVBORw0KGgo="}}
+
+"#;
         let image = super::codex_image_result_from_sse(raw).expect("final image result");
         assert_eq!(image.mime_type, "image/png");
         assert_eq!(image.base64, "iVBORw0KGgo=");
