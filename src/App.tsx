@@ -51,6 +51,7 @@ import {
   invokeDisconnect9Router,
   invokeRouterChatStart,
   invokeWebSearch,
+  invokeRouterVisionDescribe,
 } from "./lib/tauri";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackgroundLayer } from "./components/BackgroundLayer";
@@ -252,6 +253,7 @@ export default function App() {
   const memoryReadyRef = useRef(false);
   const memoryOperationRef = useRef(false);
   const activeConversationRef = useRef<string | null>(null);
+  const visionCacheRef = useRef<Map<string, string>>(new Map());
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceTimerRef = useRef<number | null>(null);
   const skipNextPersistenceRef = useRef(false);
@@ -885,6 +887,40 @@ export default function App() {
     else setCommandDialog("menu");
   }, []);
 
+  const prepareModelMessages = useCallback(async (conversationMessages: Message[], provider: AiProvider) => {
+    const prepared = await buildModelMessages(conversationMessages);
+    if (provider !== "9router" || !settings.ai.visionModel) return prepared;
+
+    for (let index = 0; index < prepared.length; index += 1) {
+      const current = prepared[index];
+      if (current.role !== "user" || !current.images?.length) continue;
+      const source = conversationMessages[index];
+      if (!source) continue;
+      const cacheKey = source.id + "::" + settings.ai.visionModel;
+      let description = visionCacheRef.current.get(cacheKey);
+      if (!description) {
+        const imageAttachments = (source.attachments ?? []).filter((attachment) => attachment.format === "image");
+        const imageMimeTypes = current.images.map((_, imageIndex) =>
+          imageAttachments[imageIndex]?.mimeType || "image/png"
+        );
+        description = await invokeRouterVisionDescribe({
+          model: settings.ai.visionModel,
+          prompt: "Baca gambar untuk membantu menjawab pesan berikut: " + source.text + ". Laporkan hanya detail yang terlihat, teks yang terbaca, dan ketidakpastian.",
+          images: current.images,
+          imageMimeTypes,
+        });
+        visionCacheRef.current.set(cacheKey, description);
+      }
+      const updated = {
+        ...current,
+        content: current.content + "\n\n[Analisis visual dari Vision Helper " + settings.ai.visionModel + "]\n" + description,
+      };
+      delete updated.images;
+      prepared[index] = updated;
+    }
+    return prepared;
+  }, [settings.ai.visionModel]);
+
   const applyProfile = useCallback((p: ProfileId) => {
     const preset = profileById(p);
     setSettings((s) => ({
@@ -994,7 +1030,7 @@ export default function App() {
       let skillsPrompt = buildSkillsPrompt(skillIds);
 
       try {
-        modelMessages = await buildModelMessages([...messagesBeforeSend, userMsg]);
+        modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg], provider);
 
         // Web Research is an explicit network tool, not a claim that the model browsed.
         if (skillIds.includes("web-research")) {
@@ -1017,13 +1053,13 @@ export default function App() {
             ].filter(Boolean).join("\n\n");
           }
         }
-      } catch {
+      } catch (error) {
         chatStartPendingRef.current = false;
         setMessages((current) => current.filter((message) => message.id !== msgId && message.id !== userMsg.id));
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         setGenState("idle");
         setActiveSkillIds([]);
-        setChatError("Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
+        setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
         return false;
       }
       if (cancelBeforeStartRef.current) {
@@ -1115,7 +1151,7 @@ export default function App() {
       }
       return true;
     },
-    [genState, runtimeStatus, settings.ai, localModels, routerModels, routerConnected, refreshRuntimeStatus],
+    [genState, runtimeStatus, settings.ai, localModels, routerModels, routerConnected, refreshRuntimeStatus, prepareModelMessages],
   );
 
   // ── Stop / cancel ──
@@ -1209,7 +1245,7 @@ export default function App() {
     cancelBeforeStartRef.current = false;
     void (async () => {
       try {
-        let modelMessages = await buildModelMessages(messagesToSend);
+        let modelMessages = await prepareModelMessages(messagesToSend, provider);
         let skillsPrompt = buildSkillsPrompt(skillIds);
         if (skillIds.includes("web-research")) {
           try {
@@ -1315,7 +1351,7 @@ export default function App() {
         setChatError(error instanceof Error ? error.message : "Lampiran tidak dapat disiapkan untuk membuat ulang respons.");
       }
     })();
-  }, [genState, runtimeStatus, settings.ai, routerConnected, routerModels, refreshRuntimeStatus]);
+  }, [genState, runtimeStatus, settings.ai, routerConnected, routerModels, refreshRuntimeStatus, prepareModelMessages]);
 
   // ── New chat ──
   const newChat = useCallback(() => {
