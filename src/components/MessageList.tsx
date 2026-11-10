@@ -9,11 +9,13 @@ function MessageBubble({
   isLastAssistant,
   onRegenerate,
   onEdit,
+  onAskUser,
 }: {
   msg: Message;
   isLastAssistant: boolean;
   onRegenerate: () => void;
   onEdit: (messageId: string, text: string) => void;
+  onAskUser: (answer: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -21,6 +23,7 @@ function MessageBubble({
   const [editText, setEditText] = useState(msg.text);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [imagePreviews, setImagePreviews] = useState<Array<{ name: string; src: string }>>([]);
+  const [askAnswer, setAskAnswer] = useState("");
   const copyTimer = useRef<number | null>(null);
 
   useEffect(
@@ -56,7 +59,9 @@ function MessageBubble({
     }
   };
 
-  const displayContent = msg.streaming ? msg.text : msg.text;
+  const askUserMatch = msg.text.match(/\\[\\[ASK_USER\\]\\]([\\s\\S]*?)\\[\\[\\/ASK_USER\\]\\]/);
+  const askUserQuestion = askUserMatch?.[1]?.trim();
+  const displayContent = msg.text.replace(/\\[\\[ASK_USER\\]\\][\\s\\S]*?\\[\\[\\/ASK_USER\\]\\]/g, "").trim();
 
   return (
     <article className={"msg msg--" + msg.role}>
@@ -78,6 +83,16 @@ function MessageBubble({
         <div className="thinking-bubble" role="status" aria-live="polite">
           <span className="thinking-dots" aria-hidden="true"><span /><span /><span /></span>
           <span>{msg.activity || "Sedang menyiapkan jawaban…"}</span>
+        </div>
+      ) : null}
+      {askUserQuestion ? (
+        <div className="ask-user-card">
+          <strong>Perlu jawaban darimu</strong>
+          <p>{askUserQuestion}</p>
+          <textarea value={askAnswer} onChange={(event) => setAskAnswer(event.target.value)} rows={2} placeholder="Tulis jawaban atau informasi tambahan…" aria-label="Jawaban untuk AI" />
+          <div className="ask-user-actions">
+            <button type="button" className="btn btn--primary" disabled={!askAnswer.trim()} onClick={() => { onAskUser(askAnswer.trim()); setAskAnswer(""); }}>Kirim jawaban</button>
+          </div>
         </div>
       ) : null}
       {imagePreviews.length ? (
@@ -179,12 +194,14 @@ export function MessageList({
   animAllowed,
   onRegenerate,
   onEdit,
+  onAskUser,
 }: {
   messages: Message[];
   genState: GenState;
   animAllowed: boolean;
   onRegenerate: () => void;
   onEdit: (messageId: string, text: string) => void;
+  onAskUser: (answer: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const firstRender = useRef(true);
@@ -215,6 +232,7 @@ export function MessageList({
             isLastAssistant={m.id === lastAssistantId && genState === "idle"}
             onRegenerate={onRegenerate}
             onEdit={onEdit}
+            onAskUser={onAskUser}
           />
         ))}
       </div>
