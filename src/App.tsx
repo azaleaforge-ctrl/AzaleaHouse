@@ -301,6 +301,11 @@ export default function App() {
   }, [settings.ai.model]);
 
   const refreshRuntimeStatus = useCallback(async () => {
+    if (settings.ai.provider === "9router") {
+      const status = routerConnected ? "ready" : "runtime_unavailable";
+      setRuntimeStatus(status);
+      return status;
+    }
     const modelId = selectedModelRef.current;
     const status = await invokeRuntimeStatus(modelId);
     if (selectedModelRef.current === modelId) {
@@ -308,7 +313,7 @@ export default function App() {
       if (status === "ready") lastActivityRef.current = Date.now();
     }
     return status;
-  }, []);
+  }, [settings.ai.provider, routerConnected]);
 
   // Versi aplikasi dari Tauri bila tersedia
   useEffect(() => {
@@ -463,7 +468,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [settings.ai.model]);
+  }, [settings.ai.model, settings.ai.provider, routerConnected]);
 
   // Refresh model state once a chat ends. A request that starts from "unloaded"
   // still leaves a resident model, and that status is needed to arm the idle timer.
@@ -471,18 +476,23 @@ export default function App() {
     const previous = previousRuntimeGenStateRef.current;
     previousRuntimeGenStateRef.current = genState;
     if (previous !== "generating" || genState !== "idle") return;
-
+    if (settings.ai.provider === "9router") {
+      setRuntimeStatus(routerConnected ? "ready" : "runtime_unavailable");
+      setActiveSkillIds([]);
+      return;
+    }
     void invokeRuntimeStatus(settings.ai.model).then((status) => {
       if (!status) return;
       setRuntimeStatus(status as RuntimeStatus);
       if (status === "ready") lastActivityRef.current = Date.now();
     });
-  }, [genState, settings.ai.model]);
+  }, [genState, settings.ai.model, settings.ai.provider, routerConnected]);
 
   // Apply persisted or changed runtime policy to a model already loaded in RAM.
   // Defer briefly after chat completion so the backend can remove the terminal stream
   // from its registry before the policy-setting request checks that registry.
   useEffect(() => {
+    if (settings.ai.provider !== "local") return;
     if (runtimeStatus !== "ready" || genState !== "idle") return;
     if (chatStartPendingRef.current || streamIdRef.current !== null || runtimeOperationRef.current) return;
 
@@ -518,10 +528,11 @@ export default function App() {
       window.clearTimeout(timerId);
       if (!operationStarted) runtimeOperationRef.current = false;
     };
-  }, [settings.ai.model, settings.ai.runtimePolicy, runtimeStatus, genState]);
+  }, [settings.ai.model, settings.ai.runtimePolicy, settings.ai.provider, runtimeStatus, genState]);
 
   // ── Runtime lifecycle: automatically unload only after a full idle hour ──
   useEffect(() => {
+    if (settings.ai.provider !== "local") return;
     if (settings.ai.runtimePolicy !== "auto" || runtimeStatus !== "ready") return;
     if (genState !== "idle") return;
 
@@ -571,7 +582,7 @@ export default function App() {
       window.clearInterval(timerId);
       if (keepaliveTimerRef.current === timerId) keepaliveTimerRef.current = null;
     };
-  }, [settings.ai.runtimePolicy, runtimeStatus, genState, settings.ai.model]);
+  }, [settings.ai.provider, settings.ai.runtimePolicy, runtimeStatus, genState, settings.ai.model]);
 
   // ── Set up SSE event listeners once ──
   useEffect(() => {
