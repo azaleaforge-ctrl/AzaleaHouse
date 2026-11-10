@@ -1517,3 +1517,9 @@
 .video-studio-options label { display: flex; flex-direction: column; gap: 6px; color: var(--color-text-muted); font-size: 11px; }
 .generated-video { display: block; width: min(100%, 900px); max-height: 70vh; background: #080808; border-radius: var(--radius-md); }
 @media (max-width: 640px) { .video-studio-options { grid-template-columns: 1fr; } }
+
+.video-job-progress { margin-top: 12px; padding: 11px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--glass-bg); }
+.video-job-progress-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; color: var(--color-text-muted); font-size: 11px; }
+.video-job-progress-label strong { color: var(--color-text); font-variant-numeric: tabular-nums; }
+.video-job-progress progress { display: block; width: 100%; height: 8px; accent-color: var(--color-peach-400); }
+.video-job-progress p { margin: 7px 0 0; color: var(--color-text-faint); font-size: 10px; line-height: 1.5; }
