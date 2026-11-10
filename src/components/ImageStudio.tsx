@@ -1,20 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { RouterModel } from "../lib/tauri";
-import { invokeRouterGenerateImage } from "../lib/tauri";
+import { invokeList9RouterImageModels, invokeRouterGenerateImage, type RouterModel } from "../lib/tauri";
 
 export function ImageStudio({
   connected,
-  models,
   initialPrompt,
   onOpenConnect,
 }: {
   connected: boolean;
-  models: RouterModel[];
   initialPrompt: string;
   onOpenConnect: () => void;
 }) {
   const [model, setModel] = useState("");
-  const [showAllModels, setShowAllModels] = useState(false);
+  const [models, setModels] = useState<RouterModel[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState<"1024x1024" | "1024x1536" | "1536x1024">("1024x1024");
   const [image, setImage] = useState<{ mimeType: string; base64: string } | null>(null);
@@ -25,18 +24,30 @@ export function ImageStudio({
     if (initialPrompt.trim()) setPrompt(initialPrompt.trim());
   }, [initialPrompt]);
 
-  const imageModels = useMemo(() => models.filter((item) =>
-    /(image|dall[-_ ]?e|flux|stable[-_ ]?diffusion|sdxl|imagen|ideogram|recraft|seedream|midjourney)/i.test(item.id + " " + (item.name || ""))
-  ), [models]);
-  const modelOptions = showAllModels ? models : imageModels;
-
-  useEffect(() => {
-    if (modelOptions.length === 0) {
+  const refreshImageModels = async () => {
+    if (!connected) {
+      setModels([]);
       setModel("");
       return;
     }
-    if (!modelOptions.some((item) => item.id === model)) setModel(modelOptions[0].id);
-  }, [modelOptions, model]);
+    setLoadingModels(true);
+    setError(null);
+    try {
+      const available = await invokeList9RouterImageModels();
+      setModels(available);
+      setModel((current) => available.some((item) => item.id === current) ? current : (available[0]?.id ?? ""));
+    } catch (reason) {
+      setModels([]);
+      setModel("");
+      setError(reason instanceof Error ? reason.message : "Katalog model gambar tidak dapat dimuat.");
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshImageModels();
+  }, [connected]);
 
   const generate = async () => {
     if (!connected) {
@@ -82,16 +93,11 @@ export function ImageStudio({
             onChange={(event) => setModel(event.target.value)}
             disabled={!connected || models.length === 0}
           >
-            {modelOptions.length === 0 ? <option value="">{models.length === 0 ? "Hubungkan provider untuk memuat model" : "Tidak ditemukan model image generation yang dikenali"}</option> : null}
-            {modelOptions.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
+            {models.length === 0 ? <option value="">{loadingModels ? "Memuat katalog image model…" : "Tidak ada model gambar yang tersedia"}</option> : null}
+            {models.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
           </select>
-          <label className="image-model-override">
-            <input type="checkbox" checked={showAllModels} onChange={(event) => setShowAllModels(event.target.checked)} />
-            <span>Tampilkan semua model (uji kompatibilitas manual)</span>
-          </label>
-          <p className="row-desc">{imageModels.length
-            ? "Daftar utama memprioritaskan model yang namanya mengindikasikan image generation. Nama model bukan jaminan dukungan; endpoint provider tetap menentukan."
-            : "Tidak ada model yang terdeteksi sebagai image generator. Aktifkan daftar semua model hanya bila kamu tahu model tertentu mendukung /images/generations."}</p>
+          <button type="button" className="btn btn--ghost" disabled={!connected || loadingModels} onClick={() => void refreshImageModels()}>{loadingModels ? "Memuat model…" : "Refresh image models"}</button>
+          <p className="row-desc">Daftar diambil langsung dari endpoint khusus /v1/models/image milik 9Router, bukan hasil tebakan dari nama model chat.</p>
 
           {initialPrompt.trim() ? (
             <button type="button" className="btn btn--ghost" onClick={() => setPrompt(initialPrompt.trim())}>Gunakan deskripsi AI terakhir</button>
