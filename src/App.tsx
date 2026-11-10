@@ -8,7 +8,6 @@ import type {
   MessageAttachment,
   ProfileId,
   RuntimeStatus,
-  SkillId,
   View,
 } from "./types";
 import type { Attachment } from "./types";
@@ -67,6 +66,7 @@ import { LocalAiView } from "./components/LocalAiView";
 import { IconImage } from "./components/Icons";
 import { parseSelectedFile, buildAttachmentContext } from "./lib/file-reader";
 import { buildSkillsPrompt, detectSkills } from "./data/skills";
+import type { SkillId } from "./data/skills";
 import { CommandDialog } from "./components/CommandDialog";
 import type { CommandDialogMode } from "./components/CommandDialog";
 
@@ -835,9 +835,10 @@ export default function App() {
     if (settings.ai.provider === "9router") {
       patchAi({ model: modelId, routerModel: modelId });
     } else {
-      patchAi({ model: modelId, localModel: modelId });
+      const selected = localModels.find((item) => item.id === modelId);
+      patchAi({ model: modelId, localModel: modelId, thinking: selected?.thinking_supported ? settings.ai.thinking : false });
     }
-  }, [settings.ai.provider, patchAi]);
+  }, [settings.ai.provider, settings.ai.thinking, localModels, patchAi]);
 
   const connectRouter = useCallback(async (apiKey: string) => {
     setRouterBusy(true);
@@ -873,8 +874,12 @@ export default function App() {
     }
   }, [settings.ai.localModel, localModels, patchAi]);
 
-  const openSlashCommand = useCallback(() => {
-    setCommandDialog("menu");
+  const openSlashCommand = useCallback((command?: string) => {
+    const name = command?.trim().split(/\\s+/)[0];
+    if (name === "/sessions") setCommandDialog("sessions");
+    else if (name === "/model") setCommandDialog("model");
+    else if (name === "/connect") { setRouterError(null); setCommandDialog("connect"); }
+    else setCommandDialog("menu");
   }, []);
 
   const applyProfile = useCallback((p: ProfileId) => {
@@ -1795,7 +1800,7 @@ export default function App() {
         busy={routerBusy}
         error={routerError}
         onClose={() => setCommandDialog(null)}
-        onModeChange={setCommandDialog}
+        onModeChange={(mode) => setCommandDialog(mode)}
         onProviderChange={selectProvider}
         onModelChange={(modelId) => { selectModel(modelId); setCommandDialog(null); }}
         onConnect={connectRouter}
