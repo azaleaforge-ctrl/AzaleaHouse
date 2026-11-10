@@ -34,6 +34,9 @@ export function ImageStudio({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const promptOnlyModel = /(nano-banana|gemini.*image)/i.test(model);
+  const omitSizeModel = /cf\/@cf\/black-forest-labs\/flux-1-schnell/i.test(model);
+
   useEffect(() => {
     if (initialPrompt.trim()) setPrompt(initialPrompt.trim());
   }, [initialPrompt]);
@@ -181,7 +184,7 @@ export function ImageStudio({
           />
 
           <label className="command-label" htmlFor="image-size">Ukuran gambar</label>
-          <select id="image-size" className="select select--full" value={size} onChange={(event) => setSize(event.target.value as typeof size)}>
+          <select id="image-size" className="select select--full" value={size} onChange={(event) => setSize(event.target.value as typeof size)} disabled={promptOnlyModel || omitSizeModel}>
             <option value="512x512">Persegi kecil · 512 × 512</option>
             <option value="1024x1024">Persegi · 1024 × 1024</option>
             <option value="1024x1536">Potret · 1024 × 1536</option>
@@ -189,6 +192,8 @@ export function ImageStudio({
             <option value="1792x1024">Landscape lebar · 1792 × 1024</option>
             <option value="1024x1792">Potret tinggi · 1024 × 1792</option>
           </select>
+          {promptOnlyModel ? <p className="row-desc">Model ini memakai prompt saja. Parameter ukuran tidak dikirim agar tidak ditolak oleh adapter.</p> : null}
+          {omitSizeModel ? <p className="row-desc">Ukuran dimensi dihilangkan untuk model FLUX.1 Schnell karena adapter 9Router tertentu menolak konversi width/height.</p> : null}
 
           {error ? <p className="command-error" role="alert">{error}</p> : null}
           <button type="button" className="btn btn--primary" disabled={!connected || !model || !prompt.trim() || busy} onClick={() => void generate()}>
