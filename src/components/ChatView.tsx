@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
-import type { Attachment, GenState, Message, ProfileId, RuntimeStatus } from "../types";
-import type { ModelMeta } from "../lib/tauri";
+import type { AiProvider, Attachment, GenState, Message, ProfileId, RuntimeStatus } from "../types";
+
 import { suggestions } from "../data/mock";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -43,13 +43,15 @@ export function ChatView({
   attachments,
   onRemoveAttachment,
   onAttachFiles,
+  onOpenCommands,
+  provider,
 }: {
   messages: Message[];
   genState: GenState;
   animAllowed: boolean;
   modelName: string;
   modelId: string;
-  availableModels: ModelMeta[];
+  availableModels: Array<{ id: string; name: string }>;
   onModelChange: (modelId: string) => void;
   onOpenLocalAi: () => void;
   panelOpen: boolean;
@@ -70,6 +72,8 @@ export function ChatView({
   attachments: Attachment[];
   onRemoveAttachment: (name: string) => void;
   onAttachFiles: (files: FileList) => void;
+  onOpenCommands: () => void;
+  provider: AiProvider;
 }) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -103,7 +107,7 @@ export function ChatView({
     <>
       <header className="chat-header">
         <h1 className="chat-title">{title}</h1>
-        <div className="chat-model-picker chip" title="Pilih model AI lokal">
+        <div className="chat-model-picker chip" title="Pilih model AI">
           <span
             className={
               runtimeStatus === "ready"
@@ -122,7 +126,7 @@ export function ChatView({
             onChange={(event) => onModelChange(event.target.value)}
           >
             {!modelId ? (
-              <option value="">Pilih model AI lokal…</option>
+              <option value="">Pilih model AI…</option>
             ) : !availableModels.some((model) => model.id === modelId) ? (
               <option value={modelId}>{modelName} · belum terpasang</option>
             ) : null}
@@ -130,9 +134,9 @@ export function ChatView({
               <option key={model.id} value={model.id}>{model.name}</option>
             ))}
           </select>
-          <span className="chip-note">{runtimeChipLabel}</span>
+          <span className="chip-note">{provider === "9router" ? "9ROUTER" : "LOCAL"} · {runtimeChipLabel}</span>
         </div>
-        <button
+        {provider === "local" ? <button
           type="button"
           className="icon-btn"
           onClick={onOpenLocalAi}
@@ -140,7 +144,7 @@ export function ChatView({
           title="Kelola model Ollama"
         >
           <IconSparkles size={18} />
-        </button>
+        </button> : null}
         <div className="header-spacer" />
         <button
           type="button"
@@ -262,6 +266,7 @@ export function ChatView({
         onProfileChange={onProfileChange}
         runtimeStatus={runtimeStatus}
         onAttachFiles={onAttachFiles}
+        onOpenCommands={onOpenCommands}
       />
     </>
   );
