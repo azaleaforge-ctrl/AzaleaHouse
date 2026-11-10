@@ -137,6 +137,36 @@ pub async fn list_9router_models(
     fetch_models_with_key(&key).await
 }
 
+/// Read the dedicated 9Router image catalog instead of guessing image capability from chat model names.
+async fn fetch_image_models_with_key(key: &str) -> Result<Vec<RouterModel>, String> {
+    let response = http_client(REQUEST_TIMEOUT)?
+        .get(format!("{ROUTER_BASE}/models/image"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|error| format!("Katalog model gambar 9Router gagal dihubungi: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Katalog model gambar 9Router mengembalikan HTTP {status}: {}", detail.chars().take(900).collect::<String>()));
+    }
+    let payload: ModelList = response.json().await
+        .map_err(|error| format!("Katalog model gambar 9Router tidak valid: {error}"))?;
+    let mut models = payload.data;
+    models.retain(|model| !model.id.trim().is_empty());
+    models.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
+    Ok(models)
+}
+
+#[tauri::command]
+pub async fn list_9router_image_models(
+    credentials: State<'_, RouterCredentials>,
+) -> Result<Vec<RouterModel>, String> {
+    let key = credentials.0.lock().await.clone()
+        .ok_or_else(|| "9Router belum tersambung. Gunakan /connect untuk memasukkan API key.".to_owned())?;
+    fetch_image_models_with_key(&key).await
+}
+
 #[tauri::command]
 pub async fn disconnect_9router(credentials: State<'_, RouterCredentials>) -> Result<(), String> {
     *credentials.0.lock().await = None;
