@@ -1526,8 +1526,12 @@ pub async fn router_generate_image(
     }
 
     let raw = read_response_limited(response, 40 * 1024 * 1024).await?;
-    let value: serde_json::Value = serde_json::from_slice(&raw)
-        .map_err(|error| format!("Respons image generation tidak valid: {error}"))?;
+    let value: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(value) => value,
+        Err(error) if codex_model => return codex_image_result_from_sse(&raw)
+            .map_err(|stream_error| format!("Respons gambar Codex bukan JSON completion dan SSE juga tidak menghasilkan gambar ({error}; {stream_error}).")),
+        Err(error) => return Err(format!("Respons image generation tidak valid: {error}")),
+    };
     if let Some((encoded, format)) = codex_image_result(&value) {
         return decode_codex_image_result(&encoded, format.as_deref());
     }
@@ -1535,8 +1539,10 @@ pub async fn router_generate_image(
         .and_then(|data| data.get(0))
         .ok_or_else(|| "Endpoint image generation tidak mengembalikan gambar. Pastikan model mendukung /images/generations.".to_owned())?;
 
-    let mime_type = normalize_image_mime(first.get("mime_type").and_then(|value| value.as_str()));
-    let encoded = if let Some(encoded) = first.get("b64_json").and_then(|value| value.as_str()) {
+    let mime_type = normalize_image_mime(first.get("mime_type")
+        .or_else(|| first.get("media_type"))
+        .and_then(|value| value.as_str()));
+    if let Some(encoded) = first.get("b64_json").and_then(|value| value.as_str()) {
         if encoded.is_empty() || encoded.len() > 32 * 1024 * 1024 {
             return Err("Hasil gambar kosong atau melebihi batas ukuran 32 MiB.".to_owned());
         }
@@ -1578,7 +1584,5 @@ pub async fn router_generate_image(
         return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else {
         return Err("Respons provider tidak berisi b64_json atau URL gambar. Periksa apakah model benar-benar mendukung image generation.".to_owned());
-    };
-
-    Ok(GeneratedImage { mime_type: mime_type.to_owned(), base64: encoded })
+    }
 }
