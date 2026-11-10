@@ -864,7 +864,8 @@ export default function App() {
       const nextModel = settings.ai.routerModel && available.some((item) => item.id === settings.ai.routerModel)
         ? settings.ai.routerModel
         : available[0]?.id ?? "";
-      patchAi({ provider: "9router", model: nextModel, routerModel: nextModel });
+      const visionModel = available.some((item) => item.id === settings.ai.visionModel) ? settings.ai.visionModel : "";
+      patchAi({ provider: "9router", model: nextModel, routerModel: nextModel, visionModel });
       setCommandDialog(null);
       setRouterError(null);
     } catch (error) {
@@ -872,7 +873,7 @@ export default function App() {
     } finally {
       setRouterBusy(false);
     }
-  }, [settings.ai.routerModel, patchAi]);
+  }, [settings.ai.routerModel, settings.ai.visionModel, patchAi]);
 
   const disconnectRouter = useCallback(async () => {
     try {
@@ -899,6 +900,9 @@ export default function App() {
     try {
       const models = await invokeList9RouterModels();
       setRouterModels(models);
+      if (settings.ai.visionModel && !models.some((item) => item.id === settings.ai.visionModel)) {
+        patchAi({ visionModel: "" });
+      }
       const current = settings.ai.provider === "9router" ? settings.ai.model : settings.ai.routerModel;
       if (!models.some((item) => item.id === current)) {
         const nextModel = models[0]?.id ?? "";
@@ -912,7 +916,7 @@ export default function App() {
     } finally {
       setRouterBusy(false);
     }
-  }, [routerConnected, settings.ai.provider, settings.ai.model, settings.ai.routerModel, patchAi]);
+  }, [routerConnected, settings.ai.provider, settings.ai.model, settings.ai.routerModel, settings.ai.visionModel, patchAi]);
 
   const openSlashCommand = useCallback((command?: string) => {
     const name = command?.trim().split(/\s+/)[0];
@@ -922,7 +926,7 @@ export default function App() {
     else setCommandDialog("menu");
   }, []);
 
-  const prepareModelMessages = useCallback(async (conversationMessages: Message[], provider: AiProvider) => {
+  const prepareModelMessages = useCallback(async (conversationMessages: Message[]) => {
     const prepared = await buildModelMessages(conversationMessages);
     if (!routerConnected || !settings.ai.visionModel) return prepared;
 
@@ -1065,7 +1069,7 @@ export default function App() {
       let skillsPrompt = buildSkillsPrompt(skillIds);
 
       try {
-        modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg], provider);
+        modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg]);
 
         // Web Research is an explicit network tool, not a claim that the model browsed.
         if (skillIds.includes("web-research")) {
@@ -1280,7 +1284,7 @@ export default function App() {
     cancelBeforeStartRef.current = false;
     void (async () => {
       try {
-        let modelMessages = await prepareModelMessages(messagesToSend, provider);
+        let modelMessages = await prepareModelMessages(messagesToSend);
         let skillsPrompt = buildSkillsPrompt(skillIds);
         if (skillIds.includes("web-research")) {
           try {
