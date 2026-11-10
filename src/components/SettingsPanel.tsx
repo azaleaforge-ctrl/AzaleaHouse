@@ -19,6 +19,8 @@ export function SettingsPanel({
   onProviderChange,
   onOpenConnect,
   onDisconnect,
+  onRefreshModels,
+  routerBusy,
   onOpenAdvanced,
 }: {
   settings: AiSettings;
@@ -31,6 +33,8 @@ export function SettingsPanel({
   onProviderChange: (provider: AiProvider) => void;
   onOpenConnect: () => void;
   onDisconnect: () => void;
+  onRefreshModels: () => void;
+  routerBusy: boolean;
   onOpenAdvanced: () => void;
 }) {
   const localModel = localModels.find((item) => item.id === settings.model);
@@ -74,7 +78,10 @@ export function SettingsPanel({
             {routerConnected ? "9Router terhubung" : "9Router belum terhubung"}
           </span>
           {routerConnected ? (
-            <button type="button" className="btn" onClick={onDisconnect}>Disconnect</button>
+            <>
+              <button type="button" className="btn" disabled={routerBusy} onClick={onRefreshModels}>{routerBusy ? "Memuat…" : "Refresh models"}</button>
+              <button type="button" className="btn" onClick={onDisconnect}>Disconnect</button>
+            </>
           ) : (
             <button type="button" className="btn btn--primary" onClick={onOpenConnect}>/connect</button>
           )}
