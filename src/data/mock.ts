@@ -1,7 +1,7 @@
 import type { ModelInfo, ProfileId, ProfileInfo, RuntimeStatus } from "../types";
 
 export const APP_NAME = "AzaleaHouse";
-export const FALLBACK_VERSION = "0.2.3";
+export const FALLBACK_VERSION = "0.2.4";
 export const MEMORY_PATH = "%LOCALAPPDATA%\\AzaleaHouse\\.AzaleaMemory\\";
 
 /** Label Indonesia untuk kosakata status runtime (PRD 9.1) */
@@ -95,6 +95,18 @@ export const suggestions: Suggestion[] = [
   },
 ];
 
+export const changelogV024: string[] = [
+  "Riwayat percakapan provider tidak dipotong memakai batas riwayat AI lokal; pengaturan context dan sampling Ollama terpisah dari provider 9Router.",
+  "Provider stream yang berhenti tanpa penanda selesai tidak lagi dianggap sebagai jawaban lengkap. Jawaban parsial dipertahankan dan diberi error yang jelas.",
+  "Usage context menampilkan input, output, cache read, cache write, dan total token per percakapan apabila provider mengirim metadata usage; statistik dipulihkan saat sesi lama dibuka.",
+  "Hasil Web Research menyimpan sumber pada pesan dan menyediakan popup dengan tautan langsung ke halaman sumber.",
+  "Pesan pengguna dapat diedit dan dikirim ulang dari titik percakapan tersebut; jawaban setelah pesan itu dibuat ulang.",
+  "Setiap jawaban menampilkan durasi generasi setelah stream selesai.",
+  "Lampiran gambar chat ditampilkan sebagai thumbnail yang dapat dibuka dalam lightbox ukuran penuh.",
+  "Image Studio mengambil katalog khusus /v1/models/image 9Router, menerima hasil gambar Base64 atau URL, dan memvalidasi format file.",
+  "Image & Motion Studio menambahkan pembuatan video asynchronous melalui 9Router, polling status, progress, dan image-to-video dengan gambar referensi.",
+  "Mode Ask User dapat menampilkan kartu klarifikasi interaktif ketika model memakai format [[ASK_USER]]...[[/ASK_USER]].",
+];
 export const changelogV023: string[] = [
   "Perbaikan chat provider 9Router: parser menerima streaming OpenAI-compatible, JSON completion non-streaming, dan beberapa bentuk content yang umum.",
   "Batas output token tidak lagi dikirim ke model provider. Pengaturan Batas output hanya berlaku untuk Ollama lokal.",
