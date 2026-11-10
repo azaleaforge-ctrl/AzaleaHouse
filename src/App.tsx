@@ -48,6 +48,7 @@ import {
   invokeLoadAttachmentBase64,
   listenChatEvents,
   invokeConnect9Router,
+  invokeList9RouterModels,
   invokeDisconnect9Router,
   invokeRouterChatStart,
   invokeWebSearch,
@@ -879,6 +880,32 @@ export default function App() {
       setRouterError(error instanceof Error ? error.message : "Gagal memutuskan koneksi 9Router.");
     }
   }, [settings.ai.localModel, localModels, patchAi]);
+
+  const refreshRouterModels = useCallback(async () => {
+    if (!routerConnected) {
+      setRouterError("9Router belum terhubung. Gunakan /connect terlebih dahulu.");
+      setCommandDialog("connect");
+      return;
+    }
+    setRouterBusy(true);
+    setRouterError(null);
+    try {
+      const models = await invokeList9RouterModels();
+      setRouterModels(models);
+      const current = settings.ai.provider === "9router" ? settings.ai.model : settings.ai.routerModel;
+      if (!models.some((item) => item.id === current)) {
+        const nextModel = models[0]?.id ?? "";
+        patchAi({
+          routerModel: nextModel,
+          ...(settings.ai.provider === "9router" ? { model: nextModel } : {}),
+        });
+      }
+    } catch (error) {
+      setRouterError(error instanceof Error ? error.message : "Gagal memuat ulang daftar model 9Router.");
+    } finally {
+      setRouterBusy(false);
+    }
+  }, [routerConnected, settings.ai.provider, settings.ai.model, settings.ai.routerModel, patchAi]);
 
   const openSlashCommand = useCallback((command?: string) => {
     const name = command?.trim().split(/\s+/)[0];
@@ -1832,6 +1859,8 @@ export default function App() {
           onProviderChange={selectProvider}
           onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
           onDisconnect={disconnectRouter}
+          onRefreshModels={refreshRouterModels}
+          routerBusy={routerBusy}
           onOpenAdvanced={() => setView("settings")}
         />
       ) : null}
@@ -1861,6 +1890,7 @@ export default function App() {
         onModelChange={(modelId) => { selectModel(modelId); setCommandDialog(null); }}
         onConnect={connectRouter}
         onDisconnect={disconnectRouter}
+        onRefreshModels={refreshRouterModels}
         onOpenSession={(id) => { setCommandDialog(null); void openConversation(id); }}
         onDeleteSession={(id) => { void deleteConversation(id); }}
       />
