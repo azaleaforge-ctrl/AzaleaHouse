@@ -670,10 +670,19 @@ export default function App() {
         setMessages((current) =>
           current.map((message) => {
             if (message.id !== streamingMsgIdRef.current) return message;
+            const firstAnswerToken = Boolean(e.content?.trim()) && !message.text.trim();
             return {
               ...message,
               text: e.content ? message.text + e.content : message.text,
               usage: e.usage ?? message.usage,
+              processSteps: e.thinking
+                ? appendProcessStep(message.processSteps, "Model sedang melakukan penalaran")
+                : firstAnswerToken
+                  ? appendProcessStep(message.processSteps, "Menyusun jawaban akhir")
+                  : message.processSteps,
+              thoughtDurationMs: firstAnswerToken && message.startedAtMs
+                ? Math.max(0, Date.now() - message.startedAtMs)
+                : message.thoughtDurationMs,
               activity: e.content
                 ? undefined
                 : e.thinking
@@ -1105,6 +1114,9 @@ export default function App() {
           activity: settings.ai.thinking || settings.ai.profile === "deep"
             ? "Menyiapkan analisis…"
             : "Menyiapkan jawaban…",
+            ...((settings.ai.thinking || settings.ai.profile === "deep" || skillIds.includes("web-research"))
+              ? { processSteps: [skillIds.includes("web-research") ? "Mencari informasi dan sumber pendukung" : "Menyiapkan konteks percakapan"] }
+              : {}),
         },
       ]);
 
@@ -1117,14 +1129,14 @@ export default function App() {
 
       try {
         setMessages((current) => current.map((message) => message.id === msgId
-          ? { ...message, activity: "Menyiapkan konteks percakapan…" }
+          ? { ...message, activity: "Menyiapkan konteks percakapan…", processSteps: appendProcessStep(message.processSteps, "Menyiapkan konteks percakapan") }
           : message));
         modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg]);
 
         // Web Research is an explicit network tool, not a claim that the model browsed.
         if (skillIds.includes("web-research")) {
           setMessages((current) => current.map((message) => message.id === msgId
-            ? { ...message, activity: "Mencari sumber dan informasi pendukung…" }
+            ? { ...message, activity: "Mencari sumber dan informasi pendukung…", processSteps: appendProcessStep(message.processSteps, "Mencari sumber di internet") }
             : message));
           try {
             const results = await invokeWebSearch(t);
@@ -1140,7 +1152,7 @@ export default function App() {
               : "Web search tidak menghasilkan hasil yang dapat digunakan. Jelaskan keterbatasan ini; jangan mengklaim browsing berhasil.";
             skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
             setMessages((current) => current.map((message) => message.id === msgId
-              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…" }
+              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…", processSteps: appendProcessStep(message.processSteps, "Menganalisis hasil pencarian") }
               : message));
           } catch (error) {
             skillsPrompt = [
@@ -1350,6 +1362,9 @@ export default function App() {
         activity: settings.ai.thinking || settings.ai.profile === "deep"
           ? "Menyiapkan analisis…"
           : "Menyiapkan jawaban…",
+          ...((settings.ai.thinking || settings.ai.profile === "deep" || skillIds.includes("web-research"))
+            ? { processSteps: [skillIds.includes("web-research") ? "Mencari informasi dan sumber pendukung" : "Menyiapkan konteks percakapan"] }
+            : {}),
       },
     ]);
 
@@ -1363,7 +1378,7 @@ export default function App() {
           .join("\n\n");
         if (skillIds.includes("web-research")) {
           setMessages((current) => current.map((message) => message.id === msgId
-            ? { ...message, activity: "Mencari sumber dan informasi pendukung…" }
+            ? { ...message, activity: "Mencari sumber dan informasi pendukung…", processSteps: appendProcessStep(message.processSteps, "Mencari sumber di internet") }
             : message));
           try {
             const results = await invokeWebSearch(userMsg.text);
@@ -1379,7 +1394,7 @@ export default function App() {
               : "Pencarian web tidak mengembalikan hasil. Jangan mengklaim browsing berhasil.";
             skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
             setMessages((current) => current.map((message) => message.id === msgId
-              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…" }
+              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…", processSteps: appendProcessStep(message.processSteps, "Menganalisis hasil pencarian") }
               : message));
           } catch (error) {
             skillsPrompt = [skillsPrompt, "Web search gagal: " + (error instanceof Error ? error.message : String(error))].filter(Boolean).join("\n\n");
