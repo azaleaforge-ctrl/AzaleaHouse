@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { invokeCreateDocumentDocx, invokeOpenDocumentsFolder } from "../lib/tauri";
+import { invokeCreateDocumentDocx, invokeCreateDocumentPptx, invokeOpenDocumentsFolder } from "../lib/tauri";
 import "./DocumentsView.css";
 
 type PreviewBlock =
@@ -194,6 +194,26 @@ export function DocumentsView() {
     }
   }
 
+  async function savePptx() {
+    if (!readyToExport) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const file = await invokeCreateDocumentPptx(title, markdown);
+      setNotice({
+        kind: "success",
+        text: "PPTX berhasil dibuat: " + file.fileName + " · " + (file.size / 1024).toFixed(1) + " KB. Lokasi: " + file.path,
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Presentasi PPTX gagal dibuat.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function savePdf() {
     if (!readyToExport) return;
     setNotice({
@@ -220,13 +240,16 @@ export function DocumentsView() {
     <section className="document-studio" aria-label="Studio dokumen">
       <header className="document-studio-header document-no-print">
         <div>
-          <span className="document-eyebrow">PRD Phase 6 · Document Engine</span>
+          <span className="document-eyebrow">PRD Phase 6 · DOCX / PDF / PPTX Engine</span>
           <h1>Studio Dokumen</h1>
-          <p>Buat DOCX lokal dengan struktur yang konsisten, atau simpan pratinjau sebagai PDF melalui dialog cetak Windows.</p>
+          <p>Buat DOCX dan PPTX lokal dengan struktur konsisten, atau simpan pratinjau sebagai PDF melalui dialog cetak Windows.</p>
         </div>
         <div className="document-studio-actions">
           <button type="button" className="btn btn--ghost" onClick={openFolder}>Buka folder</button>
           <button type="button" className="btn btn--ghost" onClick={savePdf} disabled={!readyToExport}>Cetak / Simpan PDF</button>
+          <button type="button" className="btn btn--ghost" onClick={savePptx} disabled={!readyToExport}>
+            {busy ? "Membuat file…" : "Simpan PPTX"}
+          </button>
           <button type="button" className="btn btn--primary" onClick={saveDocx} disabled={!readyToExport}>
             {busy ? "Membuat DOCX…" : "Simpan DOCX"}
           </button>
