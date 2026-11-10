@@ -423,16 +423,33 @@ struct ProviderTokenUsage {
 
 fn parse_token_usage(value: &serde_json::Value) -> Option<ProviderTokenUsage> {
     let usage = value.get("usage")?;
-    let prompt = usage.get("prompt_tokens").or_else(|| usage.get("input_tokens")).and_then(|v| v.as_u64());
-    let completion = usage.get("completion_tokens").or_else(|| usage.get("output_tokens")).and_then(|v| v.as_u64());
-    let total = usage.get("total_tokens").and_then(|v| v.as_u64());
-    let prompt_details = usage.get("prompt_tokens_details").or_else(|| usage.get("input_tokens_details"));
+    // Normalize OpenAI, Anthropic-translated and Gemini usage field names.
+    let prompt = usage.get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .or_else(|| usage.get("promptTokenCount"))
+        .or_else(|| usage.get("inputTokenCount"))
+        .and_then(|v| v.as_u64());
+    let completion = usage.get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .or_else(|| usage.get("candidatesTokenCount"))
+        .or_else(|| usage.get("outputTokenCount"))
+        .and_then(|v| v.as_u64());
+    let total = usage.get("total_tokens")
+        .or_else(|| usage.get("totalTokenCount"))
+        .and_then(|v| v.as_u64());
+    let prompt_details = usage.get("prompt_tokens_details")
+        .or_else(|| usage.get("input_tokens_details"));
     let cache_read = prompt_details.and_then(|v| v.get("cached_tokens"))
         .or_else(|| usage.get("cache_read_input_tokens"))
-        .or_else(|| usage.get("cache_read_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
+        .or_else(|| usage.get("cache_read_tokens"))
+        .or_else(|| usage.get("cacheReadInputTokens"))
+        .or_else(|| usage.get("cachedContentTokenCount"))
+        .and_then(|v| v.as_u64()).unwrap_or(0);
     let cache_creation = prompt_details.and_then(|v| v.get("cache_creation_tokens"))
         .or_else(|| usage.get("cache_creation_input_tokens"))
-        .or_else(|| usage.get("cache_creation_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
+        .or_else(|| usage.get("cache_creation_tokens"))
+        .or_else(|| usage.get("cacheCreationInputTokens"))
+        .and_then(|v| v.as_u64()).unwrap_or(0);
     let input_tokens = prompt.unwrap_or(0);
     let output_tokens = completion.unwrap_or(0);
     if prompt.is_none() && completion.is_none() && total.is_none() && cache_read == 0 && cache_creation == 0 {
@@ -958,6 +975,26 @@ mod chat_stream_tests {
         })).expect("valid partial chunk");
         assert!(parsed.content.is_some());
         assert!(!parsed.finished);
+    }
+
+    #[test]
+    fn parses_gemini_style_usage_and_cache_fields() {
+        let parsed = parse_completion_chunk(&json!({
+            "choices": [],
+            "usage": {
+                "promptTokenCount": 900,
+                "candidatesTokenCount": 200,
+                "totalTokenCount": 1100,
+                "cachedContentTokenCount": 300
+            }
+        })).expect("valid Gemini usage chunk");
+        assert_eq!(parsed.usage, Some(ProviderTokenUsage {
+            input_tokens: 900,
+            output_tokens: 200,
+            total_tokens: 1100,
+            cache_read_tokens: 300,
+            cache_creation_tokens: 0,
+        }));
     }
 
     #[test]
