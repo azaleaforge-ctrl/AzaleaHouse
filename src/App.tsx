@@ -439,6 +439,9 @@ export default function App() {
             time: message.time,
             streaming: false,
             attachments: message.attachments,
+            sources: message.sources,
+            usage: message.usage,
+            durationMs: message.duration_ms,
           })));
         }
       }
@@ -663,6 +666,7 @@ export default function App() {
             return {
               ...message,
               text: e.content ? message.text + e.content : message.text,
+              usage: e.usage ?? message.usage,
               activity: e.content
                 ? undefined
                 : e.thinking
@@ -692,7 +696,7 @@ export default function App() {
               return current.filter((msg) => msg.id !== failedMessageId);
             }
             return current.map((msg) =>
-              msg.id === failedMessageId ? { ...msg, streaming: false, activity: undefined } : msg,
+              msg.id === failedMessageId ? { ...msg, streaming: false, activity: undefined, durationMs: msg.startedAtMs ? Math.max(0, Date.now() - msg.startedAtMs) : msg.durationMs } : msg,
             );
           });
         }
@@ -726,7 +730,7 @@ export default function App() {
       setMessages((m) =>
         m.map((msg) =>
           msg.id === streamingMsgIdRef.current
-            ? { ...msg, streaming: false, activity: undefined }
+            ? { ...msg, streaming: false, activity: undefined, durationMs: msg.startedAtMs ? Math.max(0, Date.now() - msg.startedAtMs) : msg.durationMs }
             : msg,
         ),
       );
@@ -766,6 +770,9 @@ export default function App() {
         text: message.text,
         time: message.time,
         attachments: message.attachments,
+        sources: message.sources,
+        usage: message.usage,
+        duration_ms: message.durationMs,
       })),
     };
 
@@ -1082,6 +1089,7 @@ export default function App() {
           role: "assistant",
           text: "",
           time: clockNow(),
+          startedAtMs: Date.now(),
           streaming: true,
           activity: settings.ai.thinking || settings.ai.profile === "deep"
             ? "Menyiapkan analisis…"
@@ -1323,6 +1331,7 @@ export default function App() {
         role: "assistant",
         text: "",
         time: clockNow(),
+        startedAtMs: Date.now(),
         streaming: true,
         activity: settings.ai.thinking || settings.ai.profile === "deep"
           ? "Menyiapkan analisis…"
@@ -1511,6 +1520,9 @@ export default function App() {
         time: message.time,
         streaming: false,
         attachments: message.attachments,
+        sources: message.sources,
+        usage: message.usage,
+        durationMs: message.duration_ms,
       })));
       setAttachments([]);
       setChatError(null);
