@@ -127,6 +127,19 @@ export function renderMarkdown(source: string): string {
       continue;
     }
 
+    // Task/checkbox list
+    if (/^[-*]\\s+\\[[ xX]\\]\\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*]\\s+\\[[ xX]\\]\\s+/.test(lines[i] ?? "")) {
+        const itemLine = lines[i] ?? "";
+        const checked = /^[-*]\\s+\\[[xX]\\]/.test(itemLine);
+        const label = itemLine.replace(/^[-*]\\s+\\[[ xX]\\]\\s+/, "");
+        items.push(`<li class="task-list-item"><input type="checkbox" disabled ${checked ? "checked" : ""} />${renderInline(label)}</li>`);
+        i += 1;
+      }
+      html.push(`<ul class="task-list">${items.join("")}</ul>`);
+      continue;
+    }
     // Unordered list
     if (/^[-*]\s+/.test(line)) {
       const items: string[] = [];
