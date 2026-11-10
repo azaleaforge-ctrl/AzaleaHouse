@@ -246,6 +246,25 @@ fn parse_completion_chunk(value: &serde_json::Value) -> Result<ParsedCompletionC
     Ok(ParsedCompletionChunk { content, has_thinking, finished })
 }
 
+fn build_chat_completion_body(
+    model: &str,
+    messages: Vec<serde_json::Value>,
+    options: &RouterOptions,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": true
+    });
+    if let Some(value) = options.temperature {
+        body["temperature"] = serde_json::json!(value.clamp(0.0, 2.0));
+    }
+    if let Some(value) = options.top_p {
+        body["top_p"] = serde_json::json!(value.clamp(0.0, 1.0));
+    }
+    body
+}
+
 fn process_sse_line(
     app: &tauri::AppHandle,
     id: &str,
@@ -317,19 +336,8 @@ async fn router_worker(
         }
     }
 
-    // Deliberately omit max_tokens / max_completion_tokens. Provider models own
-    // their response budget; the local Ollama output limit must not truncate them.
-    let mut body = serde_json::json!({
-        "model": payload.model,
-        "messages": messages,
-        "stream": true
-    });
-    if let Some(value) = payload.options.temperature {
-        body["temperature"] = serde_json::json!(value.clamp(0.0, 2.0));
-    }
-    if let Some(value) = payload.options.top_p {
-        body["top_p"] = serde_json::json!(value.clamp(0.0, 1.0));
-    }
+    // Provider models own their output budget. No local Ollama token cap is sent.
+    let body = build_chat_completion_body(&payload.model, messages, &payload.options);
 
     let mut cancel = cancel;
     tokio::pin!(cancel);
@@ -365,17 +373,31 @@ async fn router_worker(
         // Some OpenAI-compatible gateways silently downgrade stream=true and
         // return one regular JSON completion. Accept that shape instead of
         // finishing with an empty assistant bubble.
-        if content_type.contains("application/json") && !content_type.contains("text/event-stream") {
-            let value: serde_json::Value = response.json().await
-                .map_err(|error| format!("Respons JSON chat 9Router tidak valid: {error}"))?;
-            let parsed = parse_completion_chunk(&value)?;
-            let content = parsed.content.ok_or_else(|| {
-                "9Router mengembalikan respons tanpa teks jawaban. Periksa model dan format respons gateway.".to_owned()
-            })?;
-            let _ = app.emit("azalea:chat_chunk", serde_json::json!({
-                "id": id, "model": payload.model, "content": content
-            }));
-            return Ok(());
+        if !content_type.contains("text/event-stream") {
+            let raw = response.bytes().await
+                .map_err(|error| format!("Respons chat 9Router gagal dibaca: {error}"))?;
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&raw) {
+                let parsed = parse_completion_chunk(&value)?;
+                let content = parsed.content.ok_or_else(|| {
+                    "9Router mengembalikan respons tanpa teks jawaban. Periksa model dan format respons gateway.".to_owned()
+                })?;
+                let _ = app.emit("azalea:chat_chunk", serde_json::json!({
+                    "id": id, "model": payload.model, "content": content
+                }));
+                return Ok(());
+            }
+
+            // A few gateways omit the SSE Content-Type header. If the body is
+            // not a JSON completion, attempt the documented data: line format.
+            let text = String::from_utf8_lossy(&raw);
+            let mut has_content = false;
+            for line in text.split_inclusive('\n') {
+                let _ = process_sse_line(&app, &id, &payload.model, line.as_bytes(), &mut has_content)?;
+            }
+            if has_content {
+                return Ok(());
+            }
+            return Err("Respons 9Router bukan JSON completion atau SSE yang dapat dibaca.".to_owned());
         }
 
         let mut stream = response.bytes_stream();
@@ -568,6 +590,23 @@ pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, String> {
 mod chat_stream_tests {
     use super::{parse_completion_chunk, ParsedCompletionChunk};
     use serde_json::json;
+
+    #[test]
+    fn provider_request_does_not_include_a_local_output_token_limit() {
+        let options = super::RouterOptions {
+            temperature: Some(0.7),
+            top_p: Some(0.9),
+        };
+        let body = super::build_chat_completion_body(
+            "provider/model",
+            vec![json!({"role": "user", "content": "hello"})],
+            &options,
+        );
+        assert_eq!(body.get("stream").and_then(|value| value.as_bool()), Some(true));
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("max_completion_tokens").is_none());
+        assert_eq!(body.get("temperature").and_then(|value| value.as_f64()), Some(0.7));
+    }
 
     #[test]
     fn parses_openai_streaming_delta_content() {
