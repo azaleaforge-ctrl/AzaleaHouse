@@ -249,16 +249,28 @@ pub async fn router_generate_video(
     };
 
     let client = http_client(Duration::from_secs(30))?;
+    let mut video_body = serde_json::json!({
+        "model": model,
+        "prompt": prompt,
+        "duration": duration,
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution
+    });
+    if let Some(image) = payload.image.as_deref() {
+        let image = image.trim();
+        if image.len() > 28 * 1024 * 1024
+            || !(image.starts_with("data:image/png;base64,")
+                || image.starts_with("data:image/jpeg;base64,")
+                || image.starts_with("data:image/webp;base64,"))
+        {
+            return Err("Gambar referensi video harus PNG, JPEG, atau WebP dan berukuran maksimum 20 MiB.".to_owned());
+        }
+        video_body["image"] = serde_json::json!({ "url": image });
+    }
     let response = client
         .post(format!("{ROUTER_BASE}/videos/generations"))
         .bearer_auth(&key)
-        .json(&serde_json::json!({
-            "model": model,
-            "prompt": prompt,
-            "duration": duration,
-            "aspect_ratio": aspect_ratio,
-            "resolution": resolution
-        }))
+        .json(&video_body)
         .send()
         .await
         .map_err(|error| format!("Pengiriman tugas video ke 9Router gagal: {error}"))?;
