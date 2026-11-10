@@ -4,6 +4,15 @@ import { renderMarkdown } from "../lib/markdown";
 import { IconCheck, IconCopy, IconRefresh } from "./Icons";
 import { invokeLoadAttachmentBase64 } from "../lib/tauri";
 
+function safeSourceHref(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function MessageBubble({
   msg,
   isLastAssistant,
@@ -179,7 +188,11 @@ function MessageBubble({
                 <article className="source-item" key={source.url}>
                   <span className="source-index">{index + 1}</span>
                   <div className="source-item-body">
-                    <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || source.url}</a>
+                    {safeSourceHref(source.url) ? (
+                      <a href={safeSourceHref(source.url) ?? undefined} target="_blank" rel="noopener noreferrer">{source.title || source.url}</a>
+                    ) : (
+                      <strong>{source.title || "Sumber tanpa URL HTTP yang valid"}</strong>
+                    )}
                     <p>{source.snippet}</p>
                     <span className="source-url">{source.url}</span>
                   </div>
