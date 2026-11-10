@@ -1506,3 +1506,6 @@
 .md ul.task-list { list-style: none; padding-left: 0; }
 .md .task-list-item { display: flex; align-items: flex-start; gap: 8px; }
 .md .task-list-item input { margin-top: 4px; accent-color: var(--color-peach-400); }
+
+.image-model-override { display: flex; align-items: center; gap: 8px; margin: 9px 0 5px; color: var(--color-text-muted); font-size: 11px; }
+.image-model-override input { accent-color: var(--color-peach-400); }
