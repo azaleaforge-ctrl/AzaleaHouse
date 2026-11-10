@@ -59,9 +59,9 @@ function MessageBubble({
     }
   };
 
-  const askUserMatch = msg.text.match(/\\[\\[ASK_USER\\]\\]([\\s\\S]*?)\\[\\[\\/ASK_USER\\]\\]/);
+  const askUserMatch = msg.text.match(/\[\[ASK_USER\]\]([\\s\\S]*?)\[\[\\/ASK_USER\]\]/);
   const askUserQuestion = askUserMatch?.[1]?.trim();
-  const displayContent = msg.text.replace(/\\[\\[ASK_USER\\]\\][\\s\\S]*?\\[\\[\\/ASK_USER\\]\\]/g, "").trim();
+  const displayContent = msg.text.replace(/\[\[ASK_USER\]\][\\s\\S]*?\[\[\\/ASK_USER\]\]/g, "").trim();
 
   return (
     <article className={"msg msg--" + msg.role}>
