@@ -981,7 +981,7 @@ export default function App() {
 
   const prepareModelMessages = useCallback(async (conversationMessages: Message[]) => {
     const prepared = await buildModelMessages(conversationMessages, settings.ai.provider);
-    if (settings.ai.provider !== "9router" || !routerConnected || !settings.ai.visionModel) return prepared;
+    if (!routerConnected || !settings.ai.visionModel) return prepared;
 
     for (let index = 0; index < prepared.length; index += 1) {
       const current = prepared[index];
