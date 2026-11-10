@@ -145,6 +145,29 @@ export function SettingsScreen({
           />
         </section>
 
+        <section className="settings-section" aria-labelledby="sec-profile-default">
+          <h2 className="panel-title" id="sec-profile-default">Preferensi respons</h2>
+          <FieldRow
+            label="Profil default"
+            desc="Profil respons ini berlaku untuk provider maupun AI lokal; batas context dan sampling tetap terpisah."
+            control={
+              <select
+                className="select"
+                value={ai.profile}
+                onChange={(e) => onChange({ ai: { ...ai, profile: e.target.value as ProfileId } })}
+                aria-label="Profil default"
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            }
+          />
+        </section>
+
+        {ai.provider === "local" ? (
         <section className="settings-section" aria-labelledby="sec-ai">
           <h2 className="panel-title" id="sec-ai">
             Default AI
@@ -238,24 +261,7 @@ export function SettingsScreen({
               }
             />
           ) : null}
-          <FieldRow
-            label="Profil default"
-            control={
-              <select
-                className="select"
-                value={ai.profile}
-                onChange={(e) => onChange({ ai: { ...ai, profile: e.target.value as ProfileId } })}
-                aria-label="Profil default"
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            }
-          />
-          <FieldRow
+          {ai.provider === "local" ? (          <FieldRow
             label="Context window"
             control={
               <select
@@ -271,7 +277,7 @@ export function SettingsScreen({
                 ))}
               </select>
             }
-          />
+          />) : null}
           {ai.provider === "local" ? (
             <FieldRow
               label="Batas output"
@@ -293,7 +299,7 @@ export function SettingsScreen({
               }
             />
           ) : null}
-          <FieldRow
+          {ai.provider === "local" ? (          <FieldRow
             label="Temperature"
             stacked
             control={
@@ -309,9 +315,11 @@ export function SettingsScreen({
                 <span className="field-value">{decimalID(ai.temperature)}</span>
               </div>
             }
-          />
+          />) : null}
         </section>
+        ) : null}
 
+        {ai.provider === "local" ? (
         <section className="settings-section" aria-labelledby="sec-advanced">
           <h2 className="panel-title" id="sec-advanced">Parameter lanjutan</h2>
           <FieldRow
@@ -407,6 +415,7 @@ export function SettingsScreen({
             }
           />
         </section>
+        ) : null}
 
         <section className="settings-section" aria-labelledby="sec-update">
           <h2 className="panel-title" id="sec-update">

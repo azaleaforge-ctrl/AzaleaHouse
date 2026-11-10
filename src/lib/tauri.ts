@@ -1,3 +1,5 @@
+import type { ProviderTokenUsage } from "../types";
+
 /**
  * Pembacaan versi aplikasi via Tauri API.
  * Di peramban biasa (tanpa Tauri) langsung memakai nilai fallback.
@@ -24,6 +26,7 @@ export interface ChatChunkEvent {
   /** Provider may signal reasoning activity; raw reasoning text is never rendered. */
   thinking?: string | boolean | null;
   done?: boolean;
+  usage?: ProviderTokenUsage;
 }
 
 export interface ChatErrorEvent {
@@ -36,6 +39,7 @@ export interface ChatDoneEvent {
   id: string;
   prompt_eval?: { total: number; tokens_per_second: number };
   eval?: { total: number; tokens_per_second: number };
+  usage?: ProviderTokenUsage;
 }
 
 export interface ChatStartedEvent {
@@ -209,6 +213,11 @@ export interface StoredMessage {
   text: string;
   time: string;
   attachments?: import("../types").MessageAttachment[];
+  sources?: Array<{ title: string; url: string; snippet: string }>;
+  usage?: ProviderTokenUsage;
+  duration_ms?: number;
+  process_steps?: string[];
+  thought_duration_ms?: number;
 }
 
 /** Dapatkan path .AzaleaMemory yang sedang dipakai. */
@@ -648,10 +657,7 @@ export interface RouterChatPayload {
   model: string;
   messages: Array<{ role: string; content: string; images?: string[]; imageMimeTypes?: string[] }>;
   think: boolean;
-  options: {
-    temperature?: number;
-    top_p?: number;
-  };
+  options: Record<string, never>;
   skillsPrompt?: string;
 }
 
@@ -666,6 +672,37 @@ export async function invokeList9RouterModels(): Promise<RouterModel[]> {
   if (!isTauri()) throw new Error("Daftar model 9Router hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<RouterModel[]>("list_9router_models");
+}
+
+export async function invokeList9RouterImageModels(): Promise<RouterModel[]> {
+  if (!isTauri()) throw new Error("Katalog model gambar 9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<RouterModel[]>("list_9router_image_models");
+}
+
+export async function invokeList9RouterVideoModels(): Promise<RouterModel[]> {
+  if (!isTauri()) throw new Error("Katalog model video 9Router hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<RouterModel[]>("list_9router_video_models");
+}
+
+export interface GeneratedVideo {
+  url: string;
+  model: string;
+  duration: number | null;
+}
+
+export async function invokeRouterGenerateVideo(args: {
+  model: string;
+  prompt: string;
+  duration: number;
+  aspectRatio: "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "3:2" | "2:3";
+  resolution: "480p" | "720p" | "1080p";
+  image?: string;
+}): Promise<GeneratedVideo> {
+  if (!isTauri()) throw new Error("Video generation hanya tersedia di aplikasi desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<GeneratedVideo>("router_generate_video", { payload: args });
 }
 
 export async function invokeDisconnect9Router(): Promise<void> {
@@ -721,7 +758,7 @@ export interface GeneratedImage {
 export async function invokeRouterGenerateImage(args: {
   model: string;
   prompt: string;
-  size: "1024x1024" | "1024x1536" | "1536x1024";
+  size: "1024x1024" | "1024x1536" | "1536x1024" | "1792x1024" | "1024x1792" | "512x512";
 }): Promise<GeneratedImage> {
   if (!isTauri()) throw new Error("Image generation hanya tersedia di aplikasi desktop.");
   const { invoke } = await import("@tauri-apps/api/core");

@@ -37,11 +37,14 @@ pub fn run() {
             // OpenAI-compatible local 9Router provider
             router::connect_9router,
             router::list_9router_models,
+            router::list_9router_image_models,
+            router::list_9router_video_models,
             router::disconnect_9router,
             router::router_chat_start,
             router::web_search,
             router::router_vision_describe,
             router::router_generate_image,
+            router::router_generate_video,
             // Phase 4: Local storage & .AzaleaMemory
             fs::memory_path,
             fs::ensure_memory_dir,

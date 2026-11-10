@@ -52,6 +52,14 @@ export interface ProfileInfo {
   thinking: boolean;
 }
 
+export interface ProviderTokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -65,6 +73,15 @@ export interface Message {
   images?: string[];
   /** Metadata/teks lampiran yang ikut tersimpan bersama percakapan. */
   attachments?: MessageAttachment[];
+  /** Web results attached to the answer for a clickable source popover. */
+  sources?: Array<{ title: string; url: string; snippet: string }>;
+  usage?: ProviderTokenUsage;
+  startedAtMs?: number;
+  inferenceStartedAtMs?: number;
+  durationMs?: number;
+  /** Neutral, user-facing milestones; never contains raw model reasoning. */
+  processSteps?: string[];
+  thoughtDurationMs?: number;
 }
 
 /** Status generasi respons model lokal. */

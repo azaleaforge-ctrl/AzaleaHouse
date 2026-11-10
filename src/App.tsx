@@ -81,10 +81,10 @@ const AUTO_UNLOAD_IDLE_MS = 60 * 60 * 1000;
 const KEEPALIVE_CHECK_MS = 30 * 1000;
 
 /** Compile only recent, relevant attachment excerpts into model context. */
-async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload["messages"]> {
+async function buildModelMessages(messages: Message[], provider: AiProvider): Promise<ChatStartPayload["messages"]> {
   const userMessagesWithAttachments = messages
     .filter((message) => message.role === "user" && Boolean(message.attachments?.length))
-    .slice(-3);
+    .filter((message) => provider === "9router" || messages.slice(-3).some((recent) => recent.id === message.id));
   const selectedIds = new Set(userMessagesWithAttachments.map((message) => message.id));
   const recentAttachments = userMessagesWithAttachments.flatMap((message) => message.attachments ?? []);
   const latestUser = [...messages].reverse().find((message) => message.role === "user");
@@ -130,6 +130,26 @@ async function buildModelMessages(messages: Message[]): Promise<ChatStartPayload
       ...(images?.length ? { images, imageMimeTypes } : {}),
     };
   }));
+}
+
+function appendProcessStep(steps: string[] | undefined, step: string): string[] {
+  if (!step.trim() || steps?.[steps.length - 1] === step) return steps ?? [];
+  return [...(steps ?? []), step].slice(-12);
+}
+
+function mergeProviderUsage(previous: Message["usage"], incoming: Message["usage"]): Message["usage"] {
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+  // Provider gateways may send input/output/cache counters in separate
+  // cumulative chunks. Merge monotonically so a partial usage event cannot
+  // erase a counter received in an earlier chunk.
+  return {
+    input_tokens: Math.max(previous.input_tokens, incoming.input_tokens),
+    output_tokens: Math.max(previous.output_tokens, incoming.output_tokens),
+    total_tokens: Math.max(previous.total_tokens, incoming.total_tokens),
+    cache_read_tokens: Math.max(previous.cache_read_tokens, incoming.cache_read_tokens),
+    cache_creation_tokens: Math.max(previous.cache_creation_tokens, incoming.cache_creation_tokens),
+  };
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -439,6 +459,11 @@ export default function App() {
             time: message.time,
             streaming: false,
             attachments: message.attachments,
+            sources: message.sources,
+            usage: message.usage,
+            durationMs: message.duration_ms,
+            processSteps: message.process_steps,
+            thoughtDurationMs: message.thought_duration_ms,
           })));
         }
       }
@@ -660,9 +685,19 @@ export default function App() {
         setMessages((current) =>
           current.map((message) => {
             if (message.id !== streamingMsgIdRef.current) return message;
+            const firstAnswerToken = Boolean(e.content?.trim()) && !message.text.trim();
             return {
               ...message,
               text: e.content ? message.text + e.content : message.text,
+              usage: mergeProviderUsage(message.usage, e.usage),
+              processSteps: e.thinking
+                ? appendProcessStep(message.processSteps, "Model sedang melakukan penalaran")
+                : firstAnswerToken
+                  ? appendProcessStep(message.processSteps, "Menyusun jawaban akhir")
+                  : message.processSteps,
+              thoughtDurationMs: firstAnswerToken && (message.inferenceStartedAtMs || message.startedAtMs)
+                ? Math.max(0, Date.now() - (message.inferenceStartedAtMs || message.startedAtMs!))
+                : message.thoughtDurationMs,
               activity: e.content
                 ? undefined
                 : e.thinking
@@ -692,7 +727,7 @@ export default function App() {
               return current.filter((msg) => msg.id !== failedMessageId);
             }
             return current.map((msg) =>
-              msg.id === failedMessageId ? { ...msg, streaming: false, activity: undefined } : msg,
+              msg.id === failedMessageId ? { ...msg, streaming: false, activity: undefined, durationMs: msg.startedAtMs ? Math.max(0, Date.now() - msg.startedAtMs) : msg.durationMs } : msg,
             );
           });
         }
@@ -722,11 +757,13 @@ export default function App() {
   }
 
   function finishStream() {
-    if (streamingMsgIdRef.current) {
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === streamingMsgIdRef.current
-            ? { ...msg, streaming: false, activity: undefined }
+    const finishedMessageId = streamingMsgIdRef.current;
+    if (finishedMessageId) {
+      const finishedAt = Date.now();
+      setMessages((current) =>
+        current.map((msg) =>
+          msg.id === finishedMessageId
+            ? { ...msg, streaming: false, activity: undefined, durationMs: msg.startedAtMs ? Math.max(0, finishedAt - msg.startedAtMs) : msg.durationMs }
             : msg,
         ),
       );
@@ -766,6 +803,11 @@ export default function App() {
         text: message.text,
         time: message.time,
         attachments: message.attachments,
+        sources: message.sources,
+        usage: message.usage,
+        duration_ms: message.durationMs,
+        process_steps: message.processSteps,
+        thought_duration_ms: message.thoughtDurationMs,
       })),
     };
 
@@ -938,7 +980,7 @@ export default function App() {
   }, []);
 
   const prepareModelMessages = useCallback(async (conversationMessages: Message[]) => {
-    const prepared = await buildModelMessages(conversationMessages);
+    const prepared = await buildModelMessages(conversationMessages, settings.ai.provider);
     if (!routerConnected || !settings.ai.visionModel) return prepared;
 
     for (let index = 0; index < prepared.length; index += 1) {
@@ -969,7 +1011,7 @@ export default function App() {
       prepared[index] = updated;
     }
     return prepared;
-  }, [settings.ai.visionModel, routerConnected]);
+  }, [settings.ai.visionModel, settings.ai.provider, routerConnected]);
 
   const applyProfile = useCallback((p: ProfileId) => {
     const preset = profileById(p);
@@ -1082,33 +1124,38 @@ export default function App() {
           role: "assistant",
           text: "",
           time: clockNow(),
+          startedAtMs: Date.now(),
           streaming: true,
           activity: settings.ai.thinking || settings.ai.profile === "deep"
             ? "Menyiapkan analisis…"
             : "Menyiapkan jawaban…",
+            ...((settings.ai.thinking || settings.ai.profile === "deep" || skillIds.includes("web-research"))
+              ? { processSteps: [skillIds.includes("web-research") ? "Mencari informasi dan sumber pendukung" : "Menyiapkan konteks percakapan"] }
+              : {}),
         },
       ]);
 
       chatStartPendingRef.current = true;
       cancelBeforeStartRef.current = false;
       let modelMessages: ChatStartPayload["messages"];
-      let skillsPrompt = [buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
+      let skillsPrompt = ["Jika membutuhkan klarifikasi dari pengguna, keluarkan pertanyaan dalam format persis [[ASK_USER]]pertanyaan singkat[[/ASK_USER]] pada jawaban. Jangan gunakan format ini untuk pertanyaan retoris atau pertanyaan yang tidak perlu dijawab sebelum melanjutkan.", buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
         .filter(Boolean)
         .join("\n\n");
 
       try {
         setMessages((current) => current.map((message) => message.id === msgId
-          ? { ...message, activity: "Menyiapkan konteks percakapan…" }
+          ? { ...message, activity: "Menyiapkan konteks percakapan…", processSteps: appendProcessStep(message.processSteps, "Menyiapkan konteks percakapan") }
           : message));
         modelMessages = await prepareModelMessages([...messagesBeforeSend, userMsg]);
 
         // Web Research is an explicit network tool, not a claim that the model browsed.
         if (skillIds.includes("web-research")) {
           setMessages((current) => current.map((message) => message.id === msgId
-            ? { ...message, activity: "Mencari sumber dan informasi pendukung…" }
+            ? { ...message, activity: "Mencari sumber dan informasi pendukung…", processSteps: appendProcessStep(message.processSteps, "Mencari sumber di internet") }
             : message));
           try {
             const results = await invokeWebSearch(t);
+            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results, processSteps: appendProcessStep(message.processSteps, results.length ? `Menemukan ${results.length} halaman web` : "Pencarian tidak menemukan halaman yang sesuai") } : message));
             const sourceContext = results.length
               ? [
                   "HASIL WEB SEARCH (gunakan tanggal yang tercantum, jangan mengarang tanggal):",
@@ -1120,7 +1167,7 @@ export default function App() {
               : "Web search tidak menghasilkan hasil yang dapat digunakan. Jelaskan keterbatasan ini; jangan mengklaim browsing berhasil.";
             skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
             setMessages((current) => current.map((message) => message.id === msgId
-              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…" }
+              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…", processSteps: appendProcessStep(message.processSteps, "Menganalisis hasil pencarian") }
               : message));
           } catch (error) {
             skillsPrompt = [
@@ -1147,6 +1194,10 @@ export default function App() {
         return false;
       }
 
+      const inferenceStartedAtMs = Date.now();
+      setMessages((current) => current.map((message) => message.id === msgId
+        ? { ...message, inferenceStartedAtMs, processSteps: appendProcessStep(message.processSteps, "Memulai proses generasi model") }
+        : message));
       let id: string | null = null;
       try {
         if (provider === "9router") {
@@ -1154,10 +1205,7 @@ export default function App() {
             model: settings.ai.model,
             messages: modelMessages,
             think: settings.ai.thinking,
-            options: {
-              temperature: settings.ai.temperature,
-              top_p: settings.ai.topP,
-            },
+            options: {},
             skillsPrompt,
           });
         } else {
@@ -1278,7 +1326,7 @@ export default function App() {
   }, [commandDialog, versionOpen, genState, stopGeneration]);
 
   // ── Regenerate ──
-  const regenerate = useCallback(() => {
+  const regenerate = useCallback((edit?: { messageId: string; text: string }) => {
     if (memoryOperationRef.current) {
       setMemoryNotice("Selesaikan operasi penyimpanan sebelum membuat ulang respons.");
       return;
@@ -1286,7 +1334,7 @@ export default function App() {
     const provider = settings.ai.provider;
     const current = messagesRef.current;
     const last = current[current.length - 1];
-    if (!last || last.role !== "assistant" || genState === "generating" || chatStartPendingRef.current) return;
+    if ((!edit && (!last || last.role !== "assistant")) || (edit && (!edit.text.trim() || !current.some((message) => message.id === edit.messageId && message.role === "user"))) || genState === "generating" || chatStartPendingRef.current) return;
 
     if (provider === "local") {
       if (runtimeOperationRef.current) {
@@ -1302,15 +1350,20 @@ export default function App() {
       return;
     }
 
-    const userMsg = [...current].reverse().find((message) => message.role === "user");
+    const currentForReplay = edit
+      ? current.map((message) => message.id === edit.messageId ? { ...message, text: edit.text.trim() } : message)
+      : current;
+    const userMsg = edit
+      ? currentForReplay.find((message) => message.id === edit.messageId && message.role === "user")
+      : [...currentForReplay].reverse().find((message) => message.role === "user");
     if (!userMsg) return;
-    const idx = current.lastIndexOf(userMsg);
-    const messagesToSend = current.slice(0, idx + 1);
+    const idx = currentForReplay.findIndex((message) => message.id === userMsg.id);
+    const messagesToSend = currentForReplay.slice(0, idx + 1);
     const skillIds = detectSkills(userMsg.text, Boolean(userMsg.attachments?.length), settings.ai.thinking);
     setActiveSkillIds(skillIds);
     setChatError(null);
     lastActivityRef.current = Date.now();
-    setMessages((messages) => messages.slice(0, idx + 1));
+    setMessages(messagesToSend);
     setGenState("generating");
 
     const msgId = uid();
@@ -1323,10 +1376,14 @@ export default function App() {
         role: "assistant",
         text: "",
         time: clockNow(),
+        startedAtMs: Date.now(),
         streaming: true,
         activity: settings.ai.thinking || settings.ai.profile === "deep"
           ? "Menyiapkan analisis…"
           : "Menyiapkan jawaban…",
+          ...((settings.ai.thinking || settings.ai.profile === "deep" || skillIds.includes("web-research"))
+            ? { processSteps: [skillIds.includes("web-research") ? "Mencari informasi dan sumber pendukung" : "Menyiapkan konteks percakapan"] }
+            : {}),
       },
     ]);
 
@@ -1335,15 +1392,16 @@ export default function App() {
     void (async () => {
       try {
         let modelMessages = await prepareModelMessages(messagesToSend);
-        let skillsPrompt = [buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
+        let skillsPrompt = ["Jika membutuhkan klarifikasi dari pengguna, keluarkan pertanyaan dalam format persis [[ASK_USER]]pertanyaan singkat[[/ASK_USER]] pada jawaban. Jangan gunakan format ini untuk pertanyaan retoris atau pertanyaan yang tidak perlu dijawab sebelum melanjutkan.", buildProfilePrompt(settings.ai.profile), buildSkillsPrompt(skillIds)]
           .filter(Boolean)
           .join("\n\n");
         if (skillIds.includes("web-research")) {
           setMessages((current) => current.map((message) => message.id === msgId
-            ? { ...message, activity: "Mencari sumber dan informasi pendukung…" }
+            ? { ...message, activity: "Mencari sumber dan informasi pendukung…", processSteps: appendProcessStep(message.processSteps, "Mencari sumber di internet") }
             : message));
           try {
             const results = await invokeWebSearch(userMsg.text);
+            setMessages((current) => current.map((message) => message.id === msgId ? { ...message, sources: results, processSteps: appendProcessStep(message.processSteps, results.length ? `Menemukan ${results.length} halaman web` : "Pencarian tidak menemukan halaman yang sesuai") } : message));
             const sourceContext = results.length
               ? [
                   "HASIL WEB SEARCH:",
@@ -1355,7 +1413,7 @@ export default function App() {
               : "Pencarian web tidak mengembalikan hasil. Jangan mengklaim browsing berhasil.";
             skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
             setMessages((current) => current.map((message) => message.id === msgId
-              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…" }
+              ? { ...message, activity: "Menganalisis sumber dan menyiapkan jawaban…", processSteps: appendProcessStep(message.processSteps, "Menganalisis hasil pencarian") }
               : message));
           } catch (error) {
             skillsPrompt = [skillsPrompt, "Web search gagal: " + (error instanceof Error ? error.message : String(error))].filter(Boolean).join("\n\n");
@@ -1370,16 +1428,17 @@ export default function App() {
           return;
         }
 
+        const inferenceStartedAtMs = Date.now();
+        setMessages((current) => current.map((message) => message.id === msgId
+          ? { ...message, inferenceStartedAtMs, processSteps: appendProcessStep(message.processSteps, "Memulai proses generasi model") }
+          : message));
         let id: string | null = null;
         if (provider === "9router") {
           id = await invokeRouterChatStart({
             model: settings.ai.model,
             messages: modelMessages,
             think: settings.ai.thinking,
-            options: {
-              temperature: settings.ai.temperature,
-              top_p: settings.ai.topP,
-            },
+            options: {},
             skillsPrompt,
           });
         } else {
@@ -1511,6 +1570,11 @@ export default function App() {
         time: message.time,
         streaming: false,
         attachments: message.attachments,
+        sources: message.sources,
+        usage: message.usage,
+        durationMs: message.duration_ms,
+        processSteps: message.process_steps,
+        thoughtDurationMs: message.thought_duration_ms,
       })));
       setAttachments([]);
       setChatError(null);
@@ -1587,6 +1651,17 @@ export default function App() {
   const activeModelOptions = settings.ai.provider === "9router"
     ? routerModels.map((item) => ({ id: item.id, name: item.name || item.id }))
     : localModels.map((item) => ({ id: item.id, name: item.name }));
+  const sessionUsage = messages.reduce((sum, message) => {
+    const usage = message.role === "assistant" ? message.usage : undefined;
+    if (!usage) return sum;
+    return {
+      input_tokens: sum.input_tokens + usage.input_tokens,
+      output_tokens: sum.output_tokens + usage.output_tokens,
+      total_tokens: sum.total_tokens + usage.total_tokens,
+      cache_read_tokens: sum.cache_read_tokens + usage.cache_read_tokens,
+      cache_creation_tokens: sum.cache_creation_tokens + usage.cache_creation_tokens,
+    };
+  }, { input_tokens: 0, output_tokens: 0, total_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 });
   const activeRuntimeStatus: RuntimeStatus = settings.ai.provider === "9router"
     ? (routerConnected ? "ready" : "runtime_unavailable")
     : runtimeStatus;
@@ -1896,7 +1971,6 @@ export default function App() {
           <div className="view-fade">
             <ImageStudio
               connected={routerConnected}
-              models={routerModels}
               initialPrompt={lastAssistantMessage}
               onOpenConnect={() => { setRouterError(null); setCommandDialog("connect"); }}
             />
@@ -1918,6 +1992,7 @@ export default function App() {
       {view === "chat" && panelOpen ? (
         <SettingsPanel
           settings={settings.ai}
+          usage={sessionUsage}
           localModels={localModels}
           routerModels={routerModels}
           routerConnected={routerConnected}
