@@ -291,7 +291,7 @@ pub async fn router_generate_video(
     let _ = app.emit("azalea:video_progress", serde_json::json!({
         "requestId": request_id, "status": "pending", "progress": 0
     }));
-    for attempt in 0..180u32 {
+    for _attempt in 0..180u32 {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let mut poll = client
             .get(format!("{ROUTER_BASE}/videos/{request_id}"))
@@ -1419,6 +1419,7 @@ fn remove_rejected_image_parameter(body: &mut serde_json::Value, detail: &str) -
 fn image_model_uses_prompt_only(model: &str) -> bool {
     let id = model.to_ascii_lowercase();
     id.contains("nano-banana")
+        || id.contains("nanobanana")
         || (id.contains("gemini") && id.contains("image"))
 }
 
