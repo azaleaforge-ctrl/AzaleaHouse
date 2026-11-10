@@ -655,7 +655,7 @@ export default function App() {
         // Raw reasoning tokens are not displayed. They only drive a temporary
         // status; the first answer token replaces that status automatically.
         if (e.content || e.thinking) setRuntimeStatus("ready");
-        if (e.content) streamHasContentRef.current = true;
+        if (e.content?.trim()) streamHasContentRef.current = true;
 
         setMessages((current) =>
           current.map((message) => {
