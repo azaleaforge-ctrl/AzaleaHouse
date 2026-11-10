@@ -1091,6 +1091,11 @@ data: {"type":"response.output_item.done","item":{"type":"image_generation_call"
         assert!(!super::is_public_ip("169.254.1.1".parse().unwrap()));
         assert!(!super::is_public_ip("192.168.1.1".parse().unwrap()));
         assert!(super::is_public_ip("8.8.8.8".parse().unwrap()));
+        assert!(!super::is_public_ip("fc00::1".parse().unwrap()));
+        assert!(!super::is_public_ip("fe80::1".parse().unwrap()));
+        assert!(!super::is_public_ip("2001:db8::1".parse().unwrap()));
+        assert!(!super::is_public_ip("::1".parse().unwrap()));
+        assert!(super::is_public_ip("2606:4700:4700::1111".parse().unwrap()));
     }
 
     #[test]
