@@ -21,7 +21,8 @@ export interface ChatChunkEvent {
   id: string;
   model: string;
   content?: string;
-  thinking?: string;
+  /** Provider may signal reasoning activity; raw reasoning text is never rendered. */
+  thinking?: string | boolean;
   done?: boolean;
 }
 
@@ -649,7 +650,6 @@ export interface RouterChatPayload {
   think: boolean;
   options: {
     temperature?: number;
-    num_predict?: number;
     top_p?: number;
   };
   skillsPrompt?: string;
