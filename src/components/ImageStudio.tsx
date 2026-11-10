@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RouterModel } from "../lib/tauri";
 import { invokeRouterGenerateImage } from "../lib/tauri";
 
@@ -14,6 +14,7 @@ export function ImageStudio({
   onOpenConnect: () => void;
 }) {
   const [model, setModel] = useState("");
+  const [showAllModels, setShowAllModels] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState<"1024x1024" | "1024x1536" | "1536x1024">("1024x1024");
   const [image, setImage] = useState<{ mimeType: string; base64: string } | null>(null);
@@ -24,13 +25,18 @@ export function ImageStudio({
     if (initialPrompt.trim()) setPrompt(initialPrompt.trim());
   }, [initialPrompt]);
 
+  const imageModels = useMemo(() => models.filter((item) =>
+    /(image|dall[-_ ]?e|flux|stable[-_ ]?diffusion|sdxl|imagen|ideogram|recraft|seedream|midjourney)/i.test(item.id + " " + (item.name || ""))
+  ), [models]);
+  const modelOptions = showAllModels ? models : imageModels;
+
   useEffect(() => {
-    if (models.length === 0) {
+    if (modelOptions.length === 0) {
       setModel("");
       return;
     }
-    if (!models.some((item) => item.id === model)) setModel(models[0].id);
-  }, [models, model]);
+    if (!modelOptions.some((item) => item.id === model)) setModel(modelOptions[0].id);
+  }, [modelOptions, model]);
 
   const generate = async () => {
     if (!connected) {
@@ -76,10 +82,16 @@ export function ImageStudio({
             onChange={(event) => setModel(event.target.value)}
             disabled={!connected || models.length === 0}
           >
-            {models.length === 0 ? <option value="">Hubungkan provider untuk memuat model</option> : null}
-            {models.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
+            {modelOptions.length === 0 ? <option value="">{models.length === 0 ? "Hubungkan provider untuk memuat model" : "Tidak ditemukan model image generation yang dikenali"}</option> : null}
+            {modelOptions.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
           </select>
-          <p className="row-desc">Pilih model yang mendukung endpoint /images/generations. Tidak semua model 9Router mendukung pembuatan gambar.</p>
+          <label className="image-model-override">
+            <input type="checkbox" checked={showAllModels} onChange={(event) => setShowAllModels(event.target.checked)} />
+            <span>Tampilkan semua model (uji kompatibilitas manual)</span>
+          </label>
+          <p className="row-desc">{imageModels.length
+            ? "Daftar utama memprioritaskan model yang namanya mengindikasikan image generation. Nama model bukan jaminan dukungan; endpoint provider tetap menentukan."
+            : "Tidak ada model yang terdeteksi sebagai image generator. Aktifkan daftar semua model hanya bila kamu tahu model tertentu mendukung /images/generations."}</p>
 
           {initialPrompt.trim() ? (
             <button type="button" className="btn btn--ghost" onClick={() => setPrompt(initialPrompt.trim())}>Gunakan deskripsi AI terakhir</button>
