@@ -81,6 +81,7 @@ export interface AiSettings {
   provider: AiProvider;
   localModel: ModelId;
   routerModel: ModelId;
+  visionModel: ModelId;
   thinking: boolean;
   model: ModelId;
   runtimePolicy: RuntimePolicy;
