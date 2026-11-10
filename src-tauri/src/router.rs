@@ -326,9 +326,9 @@ pub async fn router_generate_video(
         let state: serde_json::Value = poll_response.json().await
             .map_err(|error| format!("Status tugas video tidak valid: {error}"))?;
         let job_status = state.get("status").and_then(|value| value.as_str()).unwrap_or("unknown");
-        let progress = state.get("progress").and_then(|value| value.as_u64()).unwrap_or(((attempt + 1) * 100 / 180) as u64);
+        let progress = state.get("progress").and_then(|value| value.as_u64()).map(|value| value.min(100));
         let _ = app.emit("azalea:video_progress", serde_json::json!({
-            "requestId": request_id, "status": job_status, "progress": progress.min(100)
+            "requestId": request_id, "status": job_status, "progress": progress
         }));
         match job_status {
             "failed" | "error" | "cancelled" => {
