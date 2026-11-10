@@ -69,6 +69,17 @@ function MessageBubble({
         <span className="msg-author">{msg.role === "assistant" ? "AzaleaHouse" : "Anda"}</span>
         <span className="msg-time">{msg.time}</span>
       </div>
+      {msg.role === "assistant" && msg.processSteps?.length ? (
+        <details className="thought-summary" open={msg.streaming && !msg.text.trim() ? true : undefined}>
+          <summary>
+            <span>Thought for {msg.thoughtDurationMs !== undefined ? Math.max(1, Math.ceil(msg.thoughtDurationMs / 1000)) : "…"} seconds</span>
+            <span className="thought-summary-count">{msg.processSteps.length} tahap</span>
+          </summary>
+          <ol>
+            {msg.processSteps.map((step, index) => <li key={index}>{step}</li>)}
+          </ol>
+        </details>
+      ) : null}
       {editing ? (
         <div className="message-edit">
           <textarea value={editText} onChange={(event) => setEditText(event.target.value)} rows={Math.max(3, Math.min(10, editText.split("\n").length + 1))} aria-label="Edit pesan" />
