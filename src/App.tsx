@@ -881,10 +881,11 @@ export default function App() {
     }));
   }, []);
 
-  // ── Send message: real local model only ──
+  // ── Send message through the active provider ──
   const sendMessage = useCallback(
     async (text: string, attached: Attachment[]): Promise<boolean> => {
       const t = text.trim();
+      const provider = settings.ai.provider;
       if (memoryOperationRef.current) {
         setChatError("Penyimpanan lokal sedang dipindahkan atau dicadangkan. Tunggu sampai selesai.");
         return false;
@@ -894,8 +895,8 @@ export default function App() {
         setChatError("Penyimpanan lokal masih disiapkan atau tidak tersedia. Tunggu sampai inisialisasi selesai, lalu coba lagi.");
         return false;
       }
-      if (runtimeOperationRef.current) {
-        setChatError("Model sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
+      if (provider === "local" && runtimeOperationRef.current) {
+        setChatError("Model lokal sedang dimuat atau dilepas dari RAM. Tunggu sampai operasi selesai, lalu coba lagi.");
         return false;
       }
       if (genState !== "idle") return false;
@@ -903,29 +904,44 @@ export default function App() {
         setChatError("Permintaan sebelumnya masih dibatalkan. Tunggu sampai proses itu selesai, lalu coba lagi.");
         return false;
       }
-      if (!settings.ai.model || !localModels.some((item) => item.id === settings.ai.model)) {
-        setChatError("Belum ada model AI lokal yang dipilih atau model pilihan tidak lagi terpasang. Buka AI Lokal untuk memilih atau mengunduh model.");
-        return false;
-      }
 
-      if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
-        const readinessMessage: Record<RuntimeStatus, string> = {
-          not_installed: "Ollama belum terpasang. Pasang Ollama terlebih dahulu untuk memakai chat AI lokal.",
-          runtime_unavailable: "Ollama tidak dapat dihubungi. Buka Ollama dan pastikan runtime lokal berjalan, lalu coba lagi.",
-          model_not_downloaded: `Model ${settings.ai.model} belum diunduh. Unduh model tersebut terlebih dahulu, lalu coba lagi.`,
-          loading: "Model masih dimuat. Tunggu sampai status model siap sebelum mengirim pesan.",
-          ready: "",
-          thinking: "Model sedang berpikir. Tunggu sampai respons saat ini selesai.",
-          generating: "Model sedang menghasilkan respons. Tunggu sampai respons saat ini selesai.",
-          unloading: "Model sedang dilepas dari memori. Tunggu sampai proses selesai, lalu coba lagi.",
-          unloaded: "",
-          error: "Runtime AI mengalami kesalahan. Periksa Ollama dan status model, lalu coba lagi.",
-        };
-        setChatError(readinessMessage[runtimeStatus]);
-        return false;
+      if (provider === "9router") {
+        if (!routerConnected) {
+          setChatError("9Router belum terhubung. Gunakan /connect untuk memasukkan API key.");
+          setCommandDialog("connect");
+          return false;
+        }
+        if (!settings.ai.model || !routerModels.some((item) => item.id === settings.ai.model)) {
+          setChatError("Pilih model 9Router yang tersedia melalui /model.");
+          setCommandDialog("model");
+          return false;
+        }
+      } else {
+        if (!settings.ai.model || !localModels.some((item) => item.id === settings.ai.model)) {
+          setChatError("Belum ada model AI lokal yang dipilih atau model pilihan tidak lagi terpasang. Buka AI Lokal untuk memilih atau mengunduh model.");
+          return false;
+        }
+        if (runtimeStatus !== "ready" && runtimeStatus !== "unloaded") {
+          const readinessMessage: Record<RuntimeStatus, string> = {
+            not_installed: "Ollama belum terpasang. Pasang Ollama terlebih dahulu untuk memakai chat AI lokal.",
+            runtime_unavailable: "Ollama tidak dapat dihubungi. Buka Ollama dan pastikan runtime lokal berjalan, lalu coba lagi.",
+            model_not_downloaded: "Model " + settings.ai.model + " belum diunduh. Unduh model tersebut terlebih dahulu, lalu coba lagi.",
+            loading: "Model masih dimuat. Tunggu sampai status model siap sebelum mengirim pesan.",
+            ready: "",
+            thinking: "Model sedang berpikir. Tunggu sampai respons saat ini selesai.",
+            generating: "Model sedang menghasilkan respons. Tunggu sampai respons saat ini selesai.",
+            unloading: "Model sedang dilepas dari memori. Tunggu sampai proses selesai, lalu coba lagi.",
+            unloaded: "",
+            error: "Runtime AI mengalami kesalahan. Periksa Ollama dan status model, lalu coba lagi.",
+          };
+          setChatError(readinessMessage[runtimeStatus]);
+          return false;
+        }
       }
 
       setChatError(null);
+      const skillIds = detectSkills(t, attached.length > 0, settings.ai.thinking);
+      setActiveSkillIds(skillIds);
 
       const images = attached
         .filter((attachment) => attachment.format === "image" && attachment.base64)
@@ -951,7 +967,7 @@ export default function App() {
       lastActivityRef.current = Date.now();
       setMessages((current) => [...current, userMsg]);
 
-      if (runtimeStatus === "unloaded") setRuntimeStatus("loading");
+      if (provider === "local" && runtimeStatus === "unloaded") setRuntimeStatus("loading");
       setGenState("generating");
       const msgId = uid();
       streamingMsgIdRef.current = msgId;
@@ -963,13 +979,38 @@ export default function App() {
       chatStartPendingRef.current = true;
       cancelBeforeStartRef.current = false;
       let modelMessages: ChatStartPayload["messages"];
+      let skillsPrompt = buildSkillsPrompt(skillIds);
+
       try {
         modelMessages = await buildModelMessages([...messagesBeforeSend, userMsg]);
+
+        // Web Research is an explicit network tool, not a claim that the model browsed.
+        if (skillIds.includes("web-research")) {
+          try {
+            const results = await invokeWebSearch(t);
+            const sourceContext = results.length
+              ? [
+                  "HASIL WEB SEARCH (gunakan tanggal yang tercantum, jangan mengarang tanggal):",
+                  ...results.map((item, index) =>
+                    (index + 1) + ". " + item.title + "\nURL: " + item.url + "\nRingkasan: " + (item.snippet || "Tidak tersedia.")
+                  ),
+                  "Cantumkan tautan sumber yang relevan di jawaban akhir dan bedakan fakta sumber dari inferensi.",
+                ].join("\n")
+              : "Web search tidak menghasilkan hasil yang dapat digunakan. Jelaskan keterbatasan ini; jangan mengklaim browsing berhasil.";
+            skillsPrompt = [skillsPrompt, sourceContext].filter(Boolean).join("\n\n");
+          } catch (error) {
+            skillsPrompt = [
+              skillsPrompt,
+              "Web search gagal dijalankan: " + (error instanceof Error ? error.message : String(error)) + ". Jangan mengklaim informasi sudah diverifikasi secara online.",
+            ].filter(Boolean).join("\n\n");
+          }
+        }
       } catch {
         chatStartPendingRef.current = false;
         setMessages((current) => current.filter((message) => message.id !== msgId && message.id !== userMsg.id));
         if (streamingMsgIdRef.current === msgId) streamingMsgIdRef.current = null;
         setGenState("idle");
+        setActiveSkillIds([]);
         setChatError("Lampiran tidak dapat disiapkan untuk dikirim. Periksa file lalu coba lagi.");
         return false;
       }
@@ -977,27 +1018,48 @@ export default function App() {
         chatStartPendingRef.current = false;
         cancelBeforeStartRef.current = false;
         streamIdRef.current = null;
+        setActiveSkillIds([]);
         return false;
       }
 
-      const payload: ChatStartPayload = {
-        model: settings.ai.model,
-        messages: modelMessages,
-        think: settings.ai.thinking,
-        runtimePolicy: settings.ai.runtimePolicy,
-        options: {
-          temperature: settings.ai.temperature,
-          num_ctx: settings.ai.contextWindow,
-          num_predict: settings.ai.maxOutputTokens,
-          top_p: settings.ai.topP,
-          top_k: settings.ai.topK,
-          repeat_penalty: settings.ai.repeatPenalty,
-          stop: settings.ai.stopSequences.split(",").map((s) => s.trim()).filter(Boolean),
-          seed: settings.ai.seed,
-        },
-      };
-
-      const id = await invokeChatStart(payload);
+      let id: string | null = null;
+      try {
+        if (provider === "9router") {
+          id = await invokeRouterChatStart({
+            model: settings.ai.model,
+            messages: modelMessages,
+            think: settings.ai.thinking,
+            options: {
+              temperature: settings.ai.temperature,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+            },
+            skillsPrompt,
+          });
+        } else {
+          const payload: ChatStartPayload = {
+            model: settings.ai.model,
+            messages: skillsPrompt
+              ? [{ role: "system", content: skillsPrompt }, ...modelMessages]
+              : modelMessages,
+            think: settings.ai.thinking,
+            runtimePolicy: settings.ai.runtimePolicy,
+            options: {
+              temperature: settings.ai.temperature,
+              num_ctx: settings.ai.contextWindow,
+              num_predict: settings.ai.maxOutputTokens,
+              top_p: settings.ai.topP,
+              top_k: settings.ai.topK,
+              repeat_penalty: settings.ai.repeatPenalty,
+              stop: settings.ai.stopSequences.split(",").map((value) => value.trim()).filter(Boolean),
+              seed: settings.ai.seed,
+            },
+          };
+          id = await invokeChatStart(payload);
+        }
+      } catch (error) {
+        setChatError(error instanceof Error ? error.message : "Gagal memulai permintaan AI.");
+      }
       chatStartPendingRef.current = false;
 
       if (cancelBeforeStartRef.current || (id && cancelledStreamIdsRef.current.has(id))) {
@@ -1011,12 +1073,12 @@ export default function App() {
           }
         }
         streamIdRef.current = null;
+        setActiveSkillIds([]);
         return false;
       }
 
       if (!id) {
-        // Backend belum menerima pesan: kembalikan chat ke keadaan sebelum kirim,
-        // supaya input pengguna tetap tersedia untuk dicoba ulang.
+        // Backend belum menerima pesan: hapus placeholder dan simpan input di composer untuk retry.
         setMessages((current) =>
           current.filter((message) => message.id !== msgId && message.id !== userMsg.id),
         );
@@ -1024,19 +1086,24 @@ export default function App() {
         streamIdRef.current = null;
         cancelBeforeStartRef.current = false;
         setGenState("idle");
+        setActiveSkillIds([]);
         lastActivityRef.current = Date.now();
-        setChatError("AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
-        void refreshRuntimeStatus();
+        setChatError(provider === "9router"
+          ? "AzaleaHouse gagal memulai respons 9Router. Periksa gateway localhost:20128, API key, dan model yang dipilih."
+          : "AzaleaHouse gagal memulai respons dari model lokal. Pastikan Ollama aktif dan model tersedia, lalu coba lagi.");
+        if (provider === "local") void refreshRuntimeStatus();
         return false;
       }
 
       streamIdRef.current = id;
       lastActivityRef.current = Date.now();
-      // The chat request itself has applied this keep_alive policy to Ollama.
-      lastAppliedRuntimeConfigRef.current = `${settings.ai.model}|${settings.ai.runtimePolicy}`;
+      if (provider === "local") {
+        // The Ollama request itself applied the selected keep-alive policy.
+        lastAppliedRuntimeConfigRef.current = settings.ai.model + "|" + settings.ai.runtimePolicy;
+      }
       return true;
     },
-    [genState, runtimeStatus, settings.ai, localModels, refreshRuntimeStatus],
+    [genState, runtimeStatus, settings.ai, localModels, routerModels, routerConnected, refreshRuntimeStatus],
   );
 
   // ── Stop / cancel ──
