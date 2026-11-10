@@ -342,7 +342,7 @@ pub async fn router_generate_video(
                 let url = state.get("video").and_then(|video| video.get("url")).and_then(|value| value.as_str())
                     .or_else(|| state.get("url").and_then(|value| value.as_str()))
                     .ok_or_else(|| "Tugas video selesai tetapi URL MP4 tidak tersedia.".to_owned())?;
-                let safe_url = validate_public_image_url(url)?;
+                let safe_url = validate_public_image_url(url).await?;
                 let actual_duration = state.get("video").and_then(|video| video.get("duration"))
                     .and_then(|value| value.as_u64()).map(|value| value.min(u8::MAX as u64) as u8);
                 let _ = app.emit("azalea:video_progress", serde_json::json!({
@@ -962,11 +962,15 @@ mod chat_stream_tests {
 
     #[test]
     fn accepts_only_https_public_named_hosts_for_generated_image_urls() {
-        assert!(super::validate_public_image_url("https://cdn.example.com/output.png").is_ok());
-        assert!(super::validate_public_image_url("http://cdn.example.com/output.png").is_err());
-        assert!(super::validate_public_image_url("https://127.0.0.1/private.png").is_err());
-        assert!(super::validate_public_image_url("https://localhost/private.png").is_err());
-        assert!(super::validate_public_image_url("https://internal.local/image.png").is_err());
+        assert!(super::parse_public_image_url("https://cdn.example.com/output.png").is_ok());
+        assert!(super::parse_public_image_url("http://cdn.example.com/output.png").is_err());
+        assert!(super::parse_public_image_url("https://127.0.0.1/private.png").is_err());
+        assert!(super::parse_public_image_url("https://localhost/private.png").is_err());
+        assert!(super::parse_public_image_url("https://internal.local/image.png").is_err());
+        assert!(!super::is_public_ip("10.0.0.1".parse().unwrap()));
+        assert!(!super::is_public_ip("169.254.1.1".parse().unwrap()));
+        assert!(!super::is_public_ip("192.168.1.1".parse().unwrap()));
+        assert!(super::is_public_ip("8.8.8.8".parse().unwrap()));
     }
 
     #[test]
@@ -1133,16 +1137,87 @@ pub struct GeneratedImage {
     pub base64: String,
 }
 
-fn validate_public_image_url(raw: &str) -> Result<Url, String> {
+fn parse_public_image_url(raw: &str) -> Result<(Url, String, u16), String> {
     let url = Url::parse(raw).map_err(|_| "URL hasil gambar dari provider tidak valid.".to_owned())?;
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
         return Err("URL gambar harus menggunakan HTTPS tanpa kredensial di URL.".to_owned());
     }
+    if url.port().is_some_and(|port| port != 443) {
+        return Err("URL gambar hanya boleh memakai port HTTPS standar (443).".to_owned());
+    }
     let host = url.host_str().ok_or_else(|| "URL gambar tidak memiliki host.".to_owned())?.to_ascii_lowercase();
-    if host.parse::<std::net::IpAddr>().is_ok() || host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") {
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local")
+        || host.ends_with(".internal") || host.ends_with(".lan") || host.ends_with(".test")
+        || host.ends_with(".invalid")
+    {
         return Err("Host URL gambar lokal/private tidak diizinkan.".to_owned());
     }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !is_public_ip(ip) {
+            return Err("URL gambar mengarah ke alamat IP non-publik.".to_owned());
+        }
+    }
+    let port = url.port_or_known_default().unwrap_or(443);
+    Ok((url, host, port))
+}
+
+fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(addr) => {
+            let o = addr.octets();
+            let carrier_grade_nat = o[0] == 100 && (64..=127).contains(&o[1]);
+            let protocol_assignment = o[0] == 192 && o[1] == 0 && o[2] == 0;
+            let benchmark = o[0] == 198 && (o[1] == 18 || o[1] == 19);
+            let documentation = (o[0] == 192 && o[1] == 0 && o[2] == 2)
+                || (o[0] == 198 && o[1] == 51 && o[2] == 100)
+                || (o[0] == 203 && o[1] == 0 && o[2] == 113);
+            !(addr.is_private() || addr.is_loopback() || addr.is_link_local()
+                || addr.is_broadcast() || addr.is_unspecified() || addr.is_multicast()
+                || carrier_grade_nat || protocol_assignment || benchmark || documentation
+                || o[0] == 0 || o[0] >= 240)
+        }
+        std::net::IpAddr::V6(addr) => {
+            if let Some(mapped) = addr.to_ipv4_mapped() {
+                return is_public_ip(std::net::IpAddr::V4(mapped));
+            }
+            !(addr.is_loopback() || addr.is_unspecified() || addr.is_multicast()
+                || addr.is_unique_local() || addr.is_unicast_link_local())
+        }
+    }
+}
+
+async fn validate_public_image_url(raw: &str) -> Result<Url, String> {
+    let (url, host, port) = parse_public_image_url(raw)?;
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(url);
+    }
+    let addresses = tokio::net::lookup_host((host.as_str(), port)).await
+        .map_err(|_| "DNS URL gambar tidak dapat diverifikasi; unduhan dibatalkan.".to_owned())?
+        .map(|address| address.ip())
+        .collect::<Vec<_>>();
+    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(*address)) {
+        return Err("URL gambar mengarah ke alamat jaringan non-publik atau DNS tidak aman.".to_owned());
+    }
     Ok(url)
+}
+
+async fn read_response_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+    if response.content_length().is_some_and(|length| length > limit as u64) {
+        return Err("File hasil gambar provider melebihi batas 24 MiB.".to_owned());
+    }
+    let mut stream = response.bytes_stream();
+    let mut output = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("Data gambar gagal dibaca: {error}"))?;
+        if output.len().saturating_add(chunk.len()) > limit {
+            return Err("File hasil gambar provider melebihi batas 24 MiB.".to_owned());
+        }
+        output.extend_from_slice(&chunk);
+    }
+    if output.is_empty() {
+        return Err("File gambar provider kosong.".to_owned());
+    }
+    Ok(output)
 }
 
 fn normalize_image_mime(raw: Option<&str>) -> &'static str {
@@ -1241,7 +1316,7 @@ pub async fn router_generate_image(
         let detected_mime = sniff_image_mime(&bytes, mime_type);
         return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else if let Some(url) = first.get("url").and_then(|value| value.as_str()) {
-        let safe_url = validate_public_image_url(url)?;
+        let safe_url = validate_public_image_url(url).await?;
         let image_client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .read_timeout(Duration::from_secs(120))
@@ -1259,7 +1334,7 @@ pub async fn router_generate_image(
                 .ok_or_else(|| "Server hasil gambar mengirim redirect tanpa lokasi.".to_owned())?;
             current_url = current_url.join(location)
                 .map_err(|_| "URL redirect hasil gambar tidak valid.".to_owned())?;
-            current_url = validate_public_image_url(current_url.as_str())?;
+            current_url = validate_public_image_url(current_url.as_str()).await?;
             image_response = image_client.get(current_url.clone()).send().await
                 .map_err(|error| format!("Redirect hasil gambar gagal diunduh: {error}"))?;
         }
@@ -1270,10 +1345,7 @@ pub async fn router_generate_image(
             return Err("File gambar provider melebihi batas 24 MiB.".to_owned());
         }
         let remote_mime = normalize_image_mime(image_response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|value| value.to_str().ok()));
-        let bytes = image_response.bytes().await.map_err(|error| format!("Data gambar gagal dibaca: {error}"))?;
-        if bytes.is_empty() || bytes.len() > 24 * 1024 * 1024 {
-            return Err("File gambar provider kosong atau melebihi 24 MiB.".to_owned());
-        }
+        let bytes = read_response_limited(image_response, 24 * 1024 * 1024).await?;
         let detected_mime = sniff_image_mime(&bytes, remote_mime);
         return Ok(GeneratedImage { mime_type: detected_mime.to_owned(), base64: STANDARD.encode(bytes) });
     } else {
